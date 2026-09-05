@@ -14,6 +14,8 @@
 - Package name `marketpulse`, source layout `apps/api/src/marketpulse/`.
 - **Clients never import from `db/` or `ingest/`.** Ingest never imports `httpx`.
 - Every database write is `INSERT ... ON CONFLICT DO UPDATE`. No exceptions.
+- Every multi-row batch insert passes its rows through `dedupe_by` (Task 6) on the same key as its `index_elements` first. Postgres raises `ON CONFLICT DO UPDATE command cannot affect row a second time` when one statement touches a row twice, and two vendors emit such duplicates.
+- Local Postgres runs as a native Windows service on port 5433, not Docker. `docker-compose.yml` is still committed as the documented path for other machines, but do not expect a Docker daemon here.
 - All secrets read from environment via `config.py`. No key literal in any committed file.
 - `pytest.ini` option `asyncio_mode = auto`. No `@pytest.mark.asyncio` decorators.
 - No network access in any test. `respx` intercepts all HTTP.
@@ -310,14 +312,26 @@ git commit -m "feat: scaffold marketpulse package with config and universe"
 - Consumes: `Settings` from Task 1.
 - Produces: `Base`, and models `Series`, `Observation`, `Asset`, `PriceDaily`, `News`, `EarningsCalendar`, `AnalystRating`, `IngestRun`. From `session.py`: `make_engine(url: str) -> AsyncEngine` and `make_session_factory(engine) -> async_sessionmaker[AsyncSession]`. Pytest fixtures `db_engine` and `db_session` (an `AsyncSession`, rolled back after each test).
 
-- [ ] **Step 1: Start the local database**
+- [ ] **Step 1: Confirm the local database is reachable**
+
+PostgreSQL 16 runs here as a native Windows service on port 5433, already installed. Confirm the role and database exist, creating them if they do not. `psql` lives under `C:\Program Files\PostgreSQL\16\bin`; the `postgres` superuser password is `marketpulse`.
 
 ```bash
-docker compose up -d postgres
-docker compose exec postgres pg_isready -U marketpulse
+export PGPASSWORD=marketpulse
+PSQL="/c/Program Files/PostgreSQL/16/bin/psql.exe"
+
+"$PSQL" -U postgres -h localhost -p 5433 -c "\du" | grep -q marketpulse \
+  || "$PSQL" -U postgres -h localhost -p 5433 \
+       -c "CREATE ROLE marketpulse LOGIN PASSWORD 'marketpulse';"
+
+"$PSQL" -U postgres -h localhost -p 5433 -lqt | cut -d'|' -f1 | grep -qw marketpulse_test \
+  || "$PSQL" -U postgres -h localhost -p 5433 \
+       -c "CREATE DATABASE marketpulse_test OWNER marketpulse;"
+
+"$PSQL" -U marketpulse -h localhost -p 5433 -d marketpulse_test -c "SELECT 1;"
 ```
 
-Expected: `accepting connections`
+Expected: the final command prints a one-row result. `docker-compose.yml` stays committed for other machines but is not used here.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1172,7 +1186,9 @@ git commit -m "feat: add Frankfurter FX client"
 - Consumes: models from Task 2.
 - Produces:
   - From `runner.py`: `JobResult(rows_upserted: int = 0, api_calls_used: int = 0, errors: list[str] = [])` dataclass, and `async run_job(session_factory, source: str, job: str, fn: Callable[[AsyncSession], Awaitable[JobResult]]) -> int` returning the `ingest_run.id`. Also `async calls_used_today(session, source: str) -> int`.
-  - From `common.py`: `async upsert_series(session, *, source, external_id, name, unit, frequency, category) -> int` returning the series id, and `async upsert_observations(session, series_id: int, points: Iterable[tuple[date, Decimal | None]]) -> int` returning the row count.
+  - From `common.py`: `dedupe_by(rows: Sequence[dict], key: Callable[[dict], Hashable]) -> list[dict]`, `async upsert_series(session, *, source, external_id, name, unit, frequency, category) -> int` returning the series id, and `async upsert_observations(session, series_id: int, points: Iterable[tuple[date, Decimal | None]]) -> int` returning the row count.
+
+**Why `dedupe_by` exists.** Postgres rejects a statement whose `ON CONFLICT DO UPDATE` would touch the same row twice: `ON CONFLICT DO UPDATE command cannot affect row a second time`. Both real sources trigger this. CoinGecko's `market_chart?days=max` appends a final current-time point that usually carries the same date as the last daily point. Finnhub returns overlapping news windows that can repeat a URL inside one response. Every batch insert in this codebase therefore passes through `dedupe_by` first, last occurrence winning.
 
 Status rules, verbatim from the spec: exception before any write → `failed`; errors present but some rows written → `partial`; otherwise → `success`.
 
@@ -1254,6 +1270,41 @@ async def test_upsert_observations_with_no_points_writes_nothing(db_session):
                                     name="M2", unit="Billions",
                                     frequency="M", category="growth")
     assert await upsert_observations(db_session, series_id, []) == 0
+
+
+def test_dedupe_by_keeps_the_last_occurrence():
+    rows = [{"k": 1, "v": "first"}, {"k": 2, "v": "other"}, {"k": 1, "v": "last"}]
+
+    assert dedupe_by(rows, lambda row: row["k"]) == [
+        {"k": 1, "v": "last"},
+        {"k": 2, "v": "other"},
+    ]
+
+
+def test_dedupe_by_preserves_first_seen_order():
+    rows = [{"k": 3}, {"k": 1}, {"k": 2}, {"k": 1}]
+
+    assert [row["k"] for row in dedupe_by(rows, lambda row: row["k"])] == [3, 1, 2]
+
+
+async def test_upsert_observations_survives_a_duplicated_date(db_session):
+    """CoinGecko appends a current-time point that repeats the last daily date."""
+    series_id = await upsert_series(db_session, source="coingecko",
+                                    external_id="bitcoin:price", name="Bitcoin price",
+                                    unit="USD", frequency="D", category="crypto")
+    points = [
+        (date(2024, 5, 1), Decimal("62000")),
+        (date(2024, 5, 1), Decimal("62500")),  # same day, later snapshot
+    ]
+
+    assert await upsert_observations(db_session, series_id, points) == 1
+    assert (await db_session.execute(select(Observation))).scalar_one().value == Decimal("62500")
+```
+
+The import line at the top of this file must include `dedupe_by`:
+
+```python
+from marketpulse.ingest.common import dedupe_by, upsert_observations, upsert_series
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -1266,7 +1317,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'marketpulse.ingest.co
 ```python
 from datetime import date
 from decimal import Decimal
-from typing import Iterable
+from typing import Callable, Hashable, Iterable, Sequence
 
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1275,6 +1326,20 @@ from marketpulse.db.models import Observation, Series
 
 # Postgres caps a statement at 65535 bind parameters; observation rows use 3 each.
 _CHUNK = 5000
+
+
+def dedupe_by(
+    rows: Sequence[dict], key: Callable[[dict], Hashable]
+) -> list[dict]:
+    """Collapse rows sharing a conflict key, keeping the last occurrence.
+
+    Postgres refuses an ON CONFLICT DO UPDATE statement that would touch the
+    same row twice, so every batch insert filters through this first.
+    """
+    merged: dict[Hashable, dict] = {}
+    for row in rows:
+        merged[key(row)] = row
+    return list(merged.values())
 
 
 async def upsert_series(
@@ -1305,10 +1370,13 @@ async def upsert_observations(
     series_id: int,
     points: Iterable[tuple[date, Decimal | None]],
 ) -> int:
-    rows = [
-        {"series_id": series_id, "obs_date": obs_date, "value": value}
-        for obs_date, value in points
-    ]
+    rows = dedupe_by(
+        [
+            {"series_id": series_id, "obs_date": obs_date, "value": value}
+            for obs_date, value in points
+        ],
+        key=lambda row: row["obs_date"],
+    )
     if not rows:
         return 0
 
@@ -1327,7 +1395,7 @@ async def upsert_observations(
 - [ ] **Step 4: Run it to verify it passes**
 
 Run: `cd apps/api && uv run pytest tests/test_ingest_common.py -v`
-Expected: PASS, 6 tests
+Expected: PASS, 9 tests
 
 - [ ] **Step 5: Write the failing test for `runner.py`**
 
@@ -3194,6 +3262,22 @@ async def test_repeated_news_polls_do_not_duplicate_rows(db_session):
         select(func.count()).select_from(News))).scalar_one() == 2
 
 
+async def test_duplicate_url_inside_one_window_does_not_crash(db_session):
+    """Finnhub returns overlapping windows; the same URL can appear twice."""
+
+    class DuplicatingFinnhub(FakeFinnhub):
+        async def fetch_news(self, symbol, start, end):
+            self.calls_made += 1
+            return [NEWS[0], NEWS[0]]
+
+    result = await ingest_news(db_session, DuplicatingFinnhub(), ["AAPL"],
+                               date(2024, 4, 25), date(2024, 5, 2))
+
+    assert result.rows_upserted == 1
+    assert (await db_session.execute(
+        select(func.count()).select_from(News))).scalar_one() == 1
+
+
 async def test_news_failure_on_one_symbol_is_recorded(db_session):
     result = await ingest_news(db_session, FakeFinnhub(fail_on={"AAPL"}),
                                ["AAPL", "MSFT"], date(2024, 4, 25), date(2024, 5, 2))
@@ -3251,6 +3335,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from marketpulse.db.models import AnalystRating, EarningsCalendar, News
+from marketpulse.ingest.common import dedupe_by
 from marketpulse.ingest.runner import JobResult
 
 
@@ -3270,14 +3355,19 @@ async def ingest_news(
         if not items:
             continue
 
-        payload = [
-            {
-                "symbol": item.symbol, "published_at": item.published_at,
-                "headline": item.headline, "source": item.source, "url": item.url,
-                "summary": item.summary, "image_url": item.image_url,
-            }
-            for item in items
-        ]
+        # Finnhub can repeat a URL inside a single window; Postgres rejects an
+        # ON CONFLICT statement that would touch the same row twice.
+        payload = dedupe_by(
+            [
+                {
+                    "symbol": item.symbol, "published_at": item.published_at,
+                    "headline": item.headline, "source": item.source, "url": item.url,
+                    "summary": item.summary, "image_url": item.image_url,
+                }
+                for item in items
+            ],
+            key=lambda row: row["url"],
+        )
         statement = insert(News).values(payload)
         await session.execute(
             statement.on_conflict_do_update(
@@ -3305,15 +3395,19 @@ async def ingest_earnings(
     if not events:
         return JobResult(api_calls_used=client.calls_made)
 
-    payload = [
-        {
-            "symbol": event.symbol, "report_date": event.report_date, "hour": event.hour,
-            "eps_estimate": event.eps_estimate, "eps_actual": event.eps_actual,
-            "revenue_estimate": event.revenue_estimate,
-            "revenue_actual": event.revenue_actual,
-        }
-        for event in events
-    ]
+    payload = dedupe_by(
+        [
+            {
+                "symbol": event.symbol, "report_date": event.report_date,
+                "hour": event.hour,
+                "eps_estimate": event.eps_estimate, "eps_actual": event.eps_actual,
+                "revenue_estimate": event.revenue_estimate,
+                "revenue_actual": event.revenue_actual,
+            }
+            for event in events
+        ],
+        key=lambda row: (row["symbol"], row["report_date"]),
+    )
     statement = insert(EarningsCalendar).values(payload)
     await session.execute(
         statement.on_conflict_do_update(
@@ -3346,14 +3440,17 @@ async def ingest_ratings(
         if not snapshots:
             continue
 
-        payload = [
-            {
-                "symbol": item.symbol, "period": item.period,
-                "strong_buy": item.strong_buy, "buy": item.buy, "hold": item.hold,
-                "sell": item.sell, "strong_sell": item.strong_sell,
-            }
-            for item in snapshots
-        ]
+        payload = dedupe_by(
+            [
+                {
+                    "symbol": item.symbol, "period": item.period,
+                    "strong_buy": item.strong_buy, "buy": item.buy, "hold": item.hold,
+                    "sell": item.sell, "strong_sell": item.strong_sell,
+                }
+                for item in snapshots
+            ],
+            key=lambda row: (row["symbol"], row["period"]),
+        )
         statement = insert(AnalystRating).values(payload)
         await session.execute(
             statement.on_conflict_do_update(
@@ -3375,7 +3472,7 @@ async def ingest_ratings(
 - [ ] **Step 9: Run it to verify it passes**
 
 Run: `cd apps/api && uv run pytest tests/test_ingest_news.py -v`
-Expected: PASS, 7 tests
+Expected: PASS, 8 tests
 
 - [ ] **Step 10: Commit**
 
