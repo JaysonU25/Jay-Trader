@@ -69,7 +69,7 @@ Split rationale: one file per vendor because vendor quirks change together and n
 
 **Interfaces:**
 - Consumes: nothing (first task)
-- Produces: `Settings` with fields `database_url: str`, `alphavantage_api_key: str`, `fred_api_key: str`, `finnhub_api_key: str`, `ingest_hmac_secret: str`, `cors_origins: list[str]`. Module-level `get_settings() -> Settings` (cached). `universe.EQUITIES: tuple[str, ...]`, `universe.FRED_SERIES: tuple[str, ...]`, `universe.CRYPTO_LIMIT: int`, `universe.FX_BASE: str`, `universe.FX_START: date`.
+- Produces: `Settings` with fields `database_url: str`, `alphavantage_api_key: str`, `fred_api_key: str`, `finnhub_api_key: str`, `ingest_hmac_secret: str`, `cors_origins: list[str]`. Module-level `get_settings() -> Settings` (cached). `universe.EQUITIES: tuple[str, ...]`, `universe.FRED_SERIES: tuple[str, ...]`, `universe.FRED_CATEGORY: dict[str, str]` (consumed by Task 8), `universe.CRYPTO_LIMIT: int`, `universe.FX_BASE: str`, `universe.FX_START: date`.
 
 - [ ] **Step 1: Create the directory skeleton and .gitignore**
 
