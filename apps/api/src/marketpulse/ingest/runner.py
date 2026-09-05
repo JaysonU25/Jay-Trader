@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 from sqlalchemy import func, select
@@ -16,10 +16,14 @@ class JobResult:
 
 
 async def calls_used_today(session: AsyncSession, source: str) -> int:
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
     statement = (
         select(func.coalesce(func.sum(IngestRun.api_calls_used), 0))
         .where(IngestRun.source == source)
-        .where(func.date(IngestRun.started_at) == func.current_date())
+        .where(IngestRun.started_at >= day_start)
+        .where(IngestRun.started_at < day_end)
     )
     return int((await session.execute(statement)).scalar_one())
 

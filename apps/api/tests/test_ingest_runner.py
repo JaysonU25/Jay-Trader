@@ -83,3 +83,26 @@ async def test_calls_used_today_sums_only_todays_runs(db_session):
     await db_session.flush()
 
     assert await calls_used_today(db_session, "alphavantage") == 10
+
+
+async def test_calls_used_today_uses_utc_day_boundary_not_session_timezone(db_session):
+    """Guards against func.date(started_at) == func.current_date(), which
+    resolves against the Postgres session's TimeZone GUC rather than UTC.
+    Build the rows relative to the actual UTC midnight boundary so the test
+    is not flaky depending on what time of day it runs.
+    """
+    utc_now = datetime.now(timezone.utc)
+    day_start = utc_now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    just_after_midnight = day_start + timedelta(minutes=30)
+    just_before_midnight = day_start - timedelta(minutes=30)  # yesterday, 23:30 UTC
+
+    db_session.add_all([
+        IngestRun(source="alphavantage", job="prices", status="success",
+                  started_at=just_after_midnight, api_calls_used=7),
+        IngestRun(source="alphavantage", job="prices", status="success",
+                  started_at=just_before_midnight, api_calls_used=99),
+    ])
+    await db_session.flush()
+
+    assert await calls_used_today(db_session, "alphavantage") == 7
