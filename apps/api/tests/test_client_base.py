@@ -11,6 +11,14 @@ class DummyClient(BaseClient):
     base_url = "https://example.test"
 
 
+class KeyedClient(BaseClient):
+    source = "keyed"
+    base_url = "https://example.test"
+
+    def _auth_params(self) -> dict[str, str]:
+        return {"apikey": "real-key"}
+
+
 def make_client(http: httpx.AsyncClient) -> DummyClient:
     async def no_sleep(_: float) -> None:
         return None
@@ -104,3 +112,22 @@ async def test_retries_on_connect_error_then_succeeds():
     async with httpx.AsyncClient() as http:
         assert await make_client(http).get_json("/thing") == {"ok": True}
     assert route.call_count == 2
+
+
+@respx.mock
+async def test_auth_params_win_over_caller_params_on_collision():
+    route = respx.get("https://example.test/thing").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    async def no_sleep(_: float) -> None:
+        return None
+
+    limiter = TokenBucket(Bucket(rate=1000, per=60.0), sleep=no_sleep)
+    async with httpx.AsyncClient() as http:
+        client = KeyedClient(http=http, limiter=limiter)
+        await client.get_json("/thing", params={"apikey": "caller-override", "symbol": "AAPL"})
+
+    assert route.call_count == 1
+    request = route.calls[0].request
+    assert request.url.params["apikey"] == "real-key"
+    assert request.url.params["symbol"] == "AAPL"
