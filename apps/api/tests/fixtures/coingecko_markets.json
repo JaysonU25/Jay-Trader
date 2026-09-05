@@ -1,0 +1,12 @@
+[
+  {
+    "id": "bitcoin", "symbol": "btc", "name": "Bitcoin",
+    "current_price": 62500.12, "market_cap": 1231000000000,
+    "total_volume": 28400000000, "last_updated": "2024-05-01T12:00:00.000Z"
+  },
+  {
+    "id": "ethereum", "symbol": "eth", "name": "Ethereum",
+    "current_price": 3010.44, "market_cap": 361000000000,
+    "total_volume": 14200000000, "last_updated": "2024-05-01T12:00:00.000Z"
+  }
+]
