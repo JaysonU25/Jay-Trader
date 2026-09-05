@@ -41,7 +41,7 @@ class BaseClient:
         return {}
 
     async def get_json(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        merged = {**self._auth_params(), **(params or {})}
+        merged = {**(params or {}), **self._auth_params()}
 
         @retry(
             retry=retry_if_exception_type(_RETRYABLE),
@@ -59,9 +59,7 @@ class BaseClient:
             if response.status_code >= 500:
                 raise TransientError(f"{self.source}: {response.status_code} on {path}")
             if response.status_code >= 400:
-                raise ApiError(
-                    f"{self.source}: {response.status_code} on {path} — {response.text[:200]}"
-                )
+                raise ApiError(f"{self.source}: {response.status_code} on {path}")
             return response.json()
 
         return await _attempt()

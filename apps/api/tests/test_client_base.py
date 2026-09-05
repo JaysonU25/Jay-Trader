@@ -2,7 +2,7 @@ import httpx
 import pytest
 import respx
 
-from marketpulse.clients.base import ApiError, BaseClient, RateLimitedError
+from marketpulse.clients.base import ApiError, BaseClient, RateLimitedError, TransientError
 from marketpulse.core.ratelimit import Bucket, TokenBucket
 
 
@@ -67,3 +67,40 @@ async def test_does_not_retry_on_404():
         with pytest.raises(ApiError):
             await make_client(http).get_json("/thing")
     assert route.call_count == 1
+
+
+@respx.mock
+async def test_gives_up_after_three_consecutive_500s_and_raises_transient():
+    route = respx.get("https://example.test/thing").mock(
+        return_value=httpx.Response(500)
+    )
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(TransientError):
+            await make_client(http).get_json("/thing")
+    assert route.call_count == 3
+
+
+@respx.mock
+async def test_retries_on_timeout_exception_then_succeeds():
+    route = respx.get("https://example.test/thing").mock(
+        side_effect=[
+            httpx.TimeoutException("timeout"),
+            httpx.Response(200, json={"ok": True}),
+        ]
+    )
+    async with httpx.AsyncClient() as http:
+        assert await make_client(http).get_json("/thing") == {"ok": True}
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_retries_on_connect_error_then_succeeds():
+    route = respx.get("https://example.test/thing").mock(
+        side_effect=[
+            httpx.ConnectError("connection failed"),
+            httpx.Response(200, json={"ok": True}),
+        ]
+    )
+    async with httpx.AsyncClient() as http:
+        assert await make_client(http).get_json("/thing") == {"ok": True}
+    assert route.call_count == 2
