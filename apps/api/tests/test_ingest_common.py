@@ -1,11 +1,13 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import func, select
 
 from marketpulse.db.models import Observation, Series
-from marketpulse.ingest.common import dedupe_by, upsert_observations, upsert_series
+from marketpulse.ingest.common import (
+    chunk_rows, dedupe_by, upsert_observations, upsert_series,
+)
 
 # See tests/test_models.py for the full explanation of this opt-in: this
 # module uses the `db_session` fixture (bound to the session-scoped event
@@ -106,3 +108,43 @@ async def test_upsert_observations_survives_a_duplicated_date(db_session):
 
     assert await upsert_observations(db_session, series_id, points) == 1
     assert (await db_session.execute(select(Observation))).scalar_one().value == Decimal("62500")
+
+
+def test_chunk_rows_sizes_chunks_from_the_row_width():
+    """asyncpg refuses more than 32767 bind parameters in one statement.
+
+    Seven-column rows therefore cannot exceed 4681 per insert; chunk_rows must
+    stay under that without any caller hardcoding a number.
+    """
+    rows = [{"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7}] * 12_000
+    chunks = list(chunk_rows(rows))
+
+    assert sum(len(chunk) for chunk in chunks) == 12_000
+    assert all(len(chunk) * 7 <= 32767 for chunk in chunks)
+    assert max(len(chunk) for chunk in chunks) <= 4681
+
+
+def test_chunk_rows_derives_width_from_the_first_row_or_the_argument():
+    rows = [{"series_id": 1, "obs_date": None, "value": None}] * 40_000
+
+    assert max(len(c) for c in chunk_rows(rows)) == max(
+        len(c) for c in chunk_rows(rows, 3)
+    )
+    # A wider declared row yields smaller chunks.
+    assert max(len(c) for c in chunk_rows(rows, 30)) < max(len(c) for c in chunk_rows(rows, 3))
+
+
+def test_chunk_rows_on_an_empty_list_yields_nothing():
+    assert list(chunk_rows([])) == []
+
+
+async def test_upsert_observations_chunks_past_the_bind_parameter_ceiling(db_session):
+    """3-column observation rows: 12000 of them exceed one statement's budget."""
+    series_id = await upsert_series(db_session, source="fred", external_id="BIG",
+                                    name="Big series", unit="Percent",
+                                    frequency="D", category="rates")
+    points = [(date(1990, 1, 1) + timedelta(days=i), Decimal(i)) for i in range(12_000)]
+
+    assert await upsert_observations(db_session, series_id, points) == 12_000
+    assert (await db_session.execute(
+        select(func.count()).select_from(Observation))).scalar_one() == 12_000

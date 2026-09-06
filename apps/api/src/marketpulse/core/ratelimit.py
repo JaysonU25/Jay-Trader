@@ -8,6 +8,23 @@ class DailyCapExceeded(Exception):
     """Raised when a source's daily request budget is spent."""
 
 
+class RateLimited(Exception):
+    """A vendor refused the request for rate-limit reasons.
+
+    The concrete client-layer exception (`clients.base.RateLimitedError`)
+    derives from this. The shared base lives here so ingest jobs can react to
+    a throttle without importing the client layer, which the architecture
+    rules forbid.
+
+    `retry_after` carries the vendor's `Retry-After` hint in whole seconds
+    when one was supplied, and is None otherwise.
+    """
+
+    def __init__(self, message: str, *, retry_after: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 @dataclass(frozen=True)
 class Bucket:
     rate: int

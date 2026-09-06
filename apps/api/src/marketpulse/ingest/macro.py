@@ -22,19 +22,24 @@ async def ingest_macro(
             meta = await client.fetch_series_meta(series_id)
             observations = await client.fetch_observations(series_id, start=start)
 
-            internal_id = await upsert_series(
-                session,
-                source="fred",
-                external_id=meta.series_id,
-                name=meta.title,
-                unit=meta.units,
-                frequency=meta.frequency,
-                category=FRED_CATEGORY.get(series_id, "other"),
-            )
-            rows += await upsert_observations(
-                session, internal_id,
-                [(item.obs_date, item.value) for item in observations],
-            )
+            # A SAVEPOINT per series: a write failure on one must unwind only
+            # that series, leaving the transaction usable for the rest.
+            written = 0
+            async with session.begin_nested():
+                internal_id = await upsert_series(
+                    session,
+                    source="fred",
+                    external_id=meta.series_id,
+                    name=meta.title,
+                    unit=meta.units,
+                    frequency=meta.frequency,
+                    category=FRED_CATEGORY.get(series_id, "other"),
+                )
+                written = await upsert_observations(
+                    session, internal_id,
+                    [(item.obs_date, item.value) for item in observations],
+                )
+            rows += written
         except Exception as exc:
             errors.append(f"{series_id}: {exc}")
 

@@ -10,26 +10,40 @@ class CoinSnapshot:
     coin_id: str
     symbol: str
     name: str
-    price_usd: Decimal
-    market_cap_usd: Decimal
-    volume_24h_usd: Decimal
+    price_usd: Decimal | None
+    market_cap_usd: Decimal | None
+    volume_24h_usd: Decimal | None
     as_of: date
 
 
 @dataclass(frozen=True)
 class CoinHistoryPoint:
     obs_date: date
-    price_usd: Decimal
-    market_cap_usd: Decimal
-    volume_24h_usd: Decimal
+    price_usd: Decimal | None
+    market_cap_usd: Decimal | None
+    volume_24h_usd: Decimal | None
 
 
-def _dec(value: object) -> Decimal:
-    return Decimal(str(value)) if value is not None else Decimal(0)
+def _dec(value: object) -> Decimal | None:
+    """Missing stays missing.
+
+    Spec 4.1 makes `observation.value` nullable precisely so a gap renders as a
+    gap. Coercing an absent market cap to 0 would draw a crash to zero on the
+    chart, so absence maps to NULL exactly as the FRED path does.
+    """
+    return None if value is None else Decimal(str(value))
 
 
 def _day(epoch_ms: int) -> date:
     return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).date()
+
+
+def _value_at(rows: list, index: int) -> object:
+    """The value half of `rows[index]`, or None if the array is short."""
+    if index >= len(rows):
+        return None
+    entry = rows[index]
+    return entry[1] if len(entry) > 1 else None
 
 
 class CoinGeckoClient(BaseClient):
@@ -69,15 +83,21 @@ class CoinGeckoClient(BaseClient):
             params={"vs_currency": "usd", "days": "max"},
         )
 
-        caps = {ts: value for ts, value in payload.get("market_caps", [])}
-        volumes = {ts: value for ts, value in payload.get("total_volumes", [])}
+        # The three arrays are parallel: entry i of each describes the same
+        # sample. They are joined by index, not by timestamp equality -- the
+        # vendor does not guarantee identical epoch-millisecond stamps across
+        # them, and an exact-match join that misses would quietly write zeros
+        # for every market cap and volume in the backfill.
+        prices = payload.get("prices") or []
+        caps = payload.get("market_caps") or []
+        volumes = payload.get("total_volumes") or []
 
         return [
             CoinHistoryPoint(
-                obs_date=_day(ts),
-                price_usd=_dec(price),
-                market_cap_usd=_dec(caps.get(ts)),
-                volume_24h_usd=_dec(volumes.get(ts)),
+                obs_date=_day(entry[0]),
+                price_usd=_dec(_value_at(prices, index)),
+                market_cap_usd=_dec(_value_at(caps, index)),
+                volume_24h_usd=_dec(_value_at(volumes, index)),
             )
-            for ts, price in payload.get("prices", [])
+            for index, entry in enumerate(prices)
         ]

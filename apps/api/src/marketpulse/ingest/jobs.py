@@ -61,9 +61,18 @@ async def run_source(job: str, *, full: bool, session_factory, settings: Setting
     source = job_source(job)
     today = date.today()
 
+    # The client is built inside `_run`, so `run_job` cannot reach it directly.
+    # This cell lets the failure path still record the requests actually spent;
+    # it reads 0 in the window before the client exists.
+    built: list = []
+
+    def calls_used() -> int:
+        return built[0].calls_made if built else 0
+
     async def _run(session: AsyncSession):
         async with httpx.AsyncClient() as http:
             client = await build_client(source, http, session, settings)
+            built.append(client)
 
             if job == "prices":
                 return await ingest_prices(session, client, EQUITIES, full=full)
@@ -71,7 +80,7 @@ async def run_source(job: str, *, full: bool, session_factory, settings: Setting
                 return await ingest_macro(session, client, FRED_SERIES)
             if job == "crypto":
                 if full:
-                    coins = [c.coin_id for c in
+                    coins = [(c.coin_id, c.name) for c in
                              await client.fetch_top_markets(limit=CRYPTO_LIMIT)]
                     return await ingest_crypto_history(session, client, coins)
                 return await ingest_crypto_snapshot(session, client, CRYPTO_LIMIT)
@@ -80,7 +89,9 @@ async def run_source(job: str, *, full: bool, session_factory, settings: Setting
                 return await ingest_news(session, client, EQUITIES,
                                          today - timedelta(days=window), today)
             if job == "earnings":
-                return await ingest_earnings(session, client,
+                # 180-day window, restricted to this project's universe: the
+                # vendor endpoint answers with the entire US market calendar.
+                return await ingest_earnings(session, client, EQUITIES,
                                              today - timedelta(days=90),
                                              today + timedelta(days=90))
             if job == "ratings":
@@ -89,4 +100,4 @@ async def run_source(job: str, *, full: bool, session_factory, settings: Setting
                 return await ingest_fx(session, client, FX_START)
             raise KeyError(f"unknown job {job}")
 
-    return await run_job(session_factory, source, job, _run)
+    return await run_job(session_factory, source, job, _run, calls_used=calls_used)

@@ -1,14 +1,37 @@
 from datetime import date
 from decimal import Decimal
-from typing import Callable, Hashable, Iterable, Sequence
+from typing import Callable, Hashable, Iterable, Iterator, Sequence
 
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from marketpulse.db.models import Observation, Series
 
-# Postgres caps a statement at 65535 bind parameters; observation rows use 3 each.
-_CHUNK = 5000
+# The asyncpg driver refuses a statement carrying more than 32767 bind
+# parameters ("the number of query arguments cannot exceed 32767"), which is
+# stricter than the Postgres wire protocol's own 65535. A batch insert spends
+# one parameter per column per row, so the row ceiling is 32767 / n_columns --
+# only 4681 rows for the seven-column price and news tables. Every batch
+# insert therefore goes through chunk_rows(), which derives its chunk size
+# from the row width and leaves headroom below the hard cap.
+_MAX_BIND_PARAMS = 30000
+
+
+def chunk_rows(
+    rows: Sequence[dict], n_columns: int | None = None
+) -> Iterator[list[dict]]:
+    """Yield slices of `rows` small enough for one bind-parameter budget.
+
+    `n_columns` defaults to the width of the first row, which is what every
+    call site wants: the payload dicts are uniform by construction.
+    """
+    if not rows:
+        return
+    if n_columns is None:
+        n_columns = len(rows[0])
+    size = max(1, _MAX_BIND_PARAMS // max(n_columns, 1))
+    for start in range(0, len(rows), size):
+        yield rows[start:start + size]
 
 
 def dedupe_by(
@@ -63,8 +86,7 @@ async def upsert_observations(
     if not rows:
         return 0
 
-    for start in range(0, len(rows), _CHUNK):
-        chunk = rows[start:start + _CHUNK]
+    for chunk in chunk_rows(rows, 3):
         statement = insert(Observation).values(chunk)
         await session.execute(
             statement.on_conflict_do_update(

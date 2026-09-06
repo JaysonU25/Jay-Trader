@@ -27,7 +27,16 @@ async def db_engine():
 async def db_session(db_engine):
     connection = await db_engine.connect()
     transaction = await connection.begin()
-    session = AsyncSession(bind=connection, expire_on_commit=False)
+    # create_savepoint, not the default conditional_savepoint: run_job's
+    # failure path calls session.rollback() before writing its audit row, and
+    # under the default that rollback tears down this fixture's own outer
+    # transaction, letting the follow-up commit leak rows into the shared test
+    # database. Pinning the session to a SAVEPOINT keeps rollback/commit inside
+    # it so the outer transaction still cleans up. (SQLAlchemy's documented
+    # recipe for "joining an external transaction" when the code under test
+    # manages transactions itself.)
+    session = AsyncSession(bind=connection, expire_on_commit=False,
+                           join_transaction_mode="create_savepoint")
     try:
         yield session
     finally:

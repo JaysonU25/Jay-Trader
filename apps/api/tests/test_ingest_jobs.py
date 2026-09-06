@@ -114,3 +114,56 @@ def test_execute_continues_past_a_failing_job_and_exits_nonzero(monkeypatch):
     assert "FAILED" in result.stdout
     assert "summary" in result.stdout
     assert "macro" in result.stdout
+
+
+@pytest.fixture
+def session_factory(db_session):
+    class _Factory:
+        def __call__(self):
+            class _Ctx:
+                async def __aenter__(self_inner):
+                    return db_session
+
+                async def __aexit__(self_inner, *exc):
+                    return False
+
+            return _Ctx()
+
+    return _Factory()
+
+
+async def test_a_failed_run_reports_the_calls_the_real_client_spent(
+    monkeypatch, session_factory, db_session, settings
+):
+    """End-to-end wiring for the quota-destruction bug: run_source builds the
+    client inside the job closure, so without an explicit reporter the failure
+    path commits api_calls_used=0 and the next process reseeds its bucket at
+    0/25, letting identical retries drain the whole non-renewable budget.
+    """
+    from sqlalchemy import select
+
+    from marketpulse.ingest import jobs as jobs_module
+    from marketpulse.ingest.runner import calls_used_today
+
+    class SpendingClient:
+        def __init__(self) -> None:
+            self.calls_made = 0
+
+        async def fetch_timeseries(self, start):
+            self.calls_made += 4  # four real requests went out
+            raise RuntimeError("upstream reset the connection mid-page")
+
+    async def fake_build_client(source, http, session, settings):
+        return SpendingClient()
+
+    monkeypatch.setattr(jobs_module, "build_client", fake_build_client)
+
+    with pytest.raises(RuntimeError, match="connection"):
+        await jobs_module.run_source("fx", full=True, session_factory=session_factory,
+                                     settings=settings)
+
+    run = (await db_session.execute(
+        select(IngestRun).where(IngestRun.source == "frankfurter"))).scalar_one()
+    assert run.status == "failed"
+    assert run.api_calls_used == 4
+    assert await calls_used_today(db_session, "frankfurter") == 4

@@ -28,28 +28,43 @@ async def ingest_crypto_snapshot(session: AsyncSession, client, limit: int) -> J
         return JobResult(api_calls_used=client.calls_made, errors=[f"top_markets: {exc}"])
 
     rows = 0
+    errors: list[str] = []
     for coin in coins:
-        values = {
-            "price": coin.price_usd,
-            "market_cap": coin.market_cap_usd,
-            "volume": coin.volume_24h_usd,
-        }
-        for metric in METRICS:
-            series_id = await _series_id(session, coin.coin_id, coin.name, metric)
-            rows += await upsert_observations(
-                session, series_id, [(coin.as_of, values[metric])]
-            )
+        # One coin failing must not roll back the coins already written.
+        try:
+            values = {
+                "price": coin.price_usd,
+                "market_cap": coin.market_cap_usd,
+                "volume": coin.volume_24h_usd,
+            }
+            written = 0
+            async with session.begin_nested():
+                for metric in METRICS:
+                    series_id = await _series_id(session, coin.coin_id, coin.name, metric)
+                    written += await upsert_observations(
+                        session, series_id, [(coin.as_of, values[metric])]
+                    )
+            rows += written
+        except Exception as exc:
+            errors.append(f"{coin.coin_id}: {exc}")
+            continue
 
-    return JobResult(rows_upserted=rows, api_calls_used=client.calls_made)
+    return JobResult(rows_upserted=rows, api_calls_used=client.calls_made, errors=errors)
 
 
 async def ingest_crypto_history(
-    session: AsyncSession, client, coin_ids: Sequence[str]
+    session: AsyncSession, client, coins: Sequence[tuple[str, str]]
 ) -> JobResult:
+    """Backfill daily history for `coins`, each a `(coin_id, display_name)` pair.
+
+    The display name is threaded through from the markets snapshot so a series
+    is called "Bitcoin price" here exactly as it is in the snapshot job, rather
+    than flipping to the raw coin id ("bitcoin price") on a backfill.
+    """
     rows = 0
     errors: list[str] = []
 
-    for coin_id in coin_ids:
+    for coin_id, name in coins:
         try:
             points = await client.fetch_history(coin_id)
             by_metric = {
@@ -57,10 +72,14 @@ async def ingest_crypto_history(
                 "market_cap": [(p.obs_date, p.market_cap_usd) for p in points],
                 "volume": [(p.obs_date, p.volume_24h_usd) for p in points],
             }
-            for metric in METRICS:
-                series_id = await _series_id(session, coin_id, coin_id, metric)
-                rows += await upsert_observations(session, series_id, by_metric[metric])
+            written = 0
+            async with session.begin_nested():
+                for metric in METRICS:
+                    series_id = await _series_id(session, coin_id, name, metric)
+                    written += await upsert_observations(session, series_id, by_metric[metric])
+            rows += written
         except Exception as exc:
             errors.append(f"{coin_id}: {exc}")
+            continue
 
     return JobResult(rows_upserted=rows, api_calls_used=client.calls_made, errors=errors)

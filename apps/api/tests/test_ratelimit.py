@@ -81,3 +81,21 @@ async def test_rate_limits_match_the_spec():
     assert RATE_LIMITS["coingecko"] == Bucket(rate=20, per=60.0)
     assert RATE_LIMITS["finnhub"] == Bucket(rate=50, per=60.0)
     assert RATE_LIMITS["frankfurter"] == Bucket(rate=60, per=60.0)
+
+
+async def test_a_partly_spent_daily_budget_allows_exactly_the_remainder():
+    """calls_used_today seeds this from the database on every process start, so
+    the arithmetic is what stands between a rerun and a drained 25/day quota.
+    """
+    clock = FakeClock()
+    bucket = TokenBucket(Bucket(rate=100, per=60.0, daily_cap=25),
+                         clock=clock.time, sleep=clock.sleep)
+    bucket.set_daily_used(20)
+
+    for _ in range(5):
+        await bucket.acquire()
+
+    with pytest.raises(DailyCapExceeded):
+        await bucket.acquire()
+
+    assert bucket.calls_made == 5  # the refused acquire spent nothing

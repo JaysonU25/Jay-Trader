@@ -1,9 +1,11 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import insert, select
+from sqlalchemy.exc import IntegrityError
 
-from marketpulse.db.models import IngestRun
+from marketpulse.db.models import IngestRun, Observation
 from marketpulse.ingest.runner import JobResult, calls_used_today, run_job
 
 # See tests/test_models.py for the full explanation of this opt-in: this
@@ -106,3 +108,157 @@ async def test_calls_used_today_uses_utc_day_boundary_not_session_timezone(db_se
     await db_session.flush()
 
     assert await calls_used_today(db_session, "alphavantage") == 7
+
+
+async def test_a_real_database_error_still_lands_the_failed_audit_row(
+    session_factory, db_session
+):
+    """The failure handler used to UPDATE on a transaction Postgres had already
+    aborted. That raised InFailedSQLTransactionError, which replaced the real
+    cause, and the ingest_run INSERT -- sharing the dead transaction -- never
+    committed, so the table recorded nothing at all.
+    """
+
+    async def job(session):
+        # A foreign key violation: server-side, so it poisons the transaction.
+        await session.execute(
+            insert(Observation).values(
+                series_id=987654321, obs_date=date(2024, 5, 1), value=Decimal("1")
+            )
+        )
+        return JobResult()
+
+    with pytest.raises(IntegrityError) as caught:
+        await run_job(session_factory, "coingecko", "crypto", job)
+
+    # The ORIGINAL cause surfaces, not InFailedSQLTransactionError.
+    assert "InFailedSqlTransaction" not in str(caught.value)
+    assert "foreign key" in str(caught.value).lower()
+
+    run = (await db_session.execute(
+        select(IngestRun).where(IngestRun.source == "coingecko"))).scalar_one()
+    assert run.status == "failed"
+    assert run.job == "crypto"
+    assert run.started_at is not None
+    assert run.finished_at is not None
+    assert "foreign key" in run.error.lower()
+
+
+async def test_a_failed_run_records_the_api_calls_it_actually_spent(
+    session_factory, db_session
+):
+    """The failure path used to commit api_calls_used=0 regardless of what the
+    job burned, so calls_used_today under-reported and the next process seeded
+    its token bucket at 0/25 -- letting identical retries drain the whole
+    non-renewable daily quota.
+    """
+    spent = 0
+
+    async def job(session):
+        nonlocal spent
+        spent = 3  # three real requests went out before the write blew up
+        raise RuntimeError("insert failed after the fetches")
+
+    with pytest.raises(RuntimeError):
+        await run_job(session_factory, "alphavantage", "prices", job,
+                      calls_used=lambda: spent)
+
+    run = (await db_session.execute(
+        select(IngestRun).where(IngestRun.source == "alphavantage"))).scalar_one()
+    assert run.status == "failed"
+    assert run.api_calls_used == 3
+    # And the daily cap arithmetic now sees them.
+    assert await calls_used_today(db_session, "alphavantage") == 3
+
+
+async def test_the_calls_reporter_may_run_before_the_client_exists(
+    session_factory, db_session
+):
+    """run_source builds the client inside the job, so a failure while building
+    it leaves the reporter with nothing to read. That must not mask the error.
+    """
+    client: list = []
+
+    def calls_used() -> int:
+        return client[0].calls_made if client else 0
+
+    async def job(session):
+        raise RuntimeError("bad api key")
+
+    with pytest.raises(RuntimeError, match="bad api key"):
+        await run_job(session_factory, "finnhub", "news", job, calls_used=calls_used)
+
+    run = (await db_session.execute(
+        select(IngestRun).where(IngestRun.source == "finnhub"))).scalar_one()
+    assert run.status == "failed"
+    assert run.api_calls_used == 0
+
+
+async def test_a_broken_calls_reporter_does_not_mask_the_original_failure(
+    session_factory, db_session
+):
+    def calls_used() -> int:
+        raise AttributeError("reporter is broken")
+
+    async def job(session):
+        raise RuntimeError("the real problem")
+
+    with pytest.raises(RuntimeError, match="the real problem"):
+        await run_job(session_factory, "frankfurter", "fx", job, calls_used=calls_used)
+
+    run = (await db_session.execute(
+        select(IngestRun).where(IngestRun.source == "frankfurter"))).scalar_one()
+    assert run.status == "failed"
+    assert run.api_calls_used == 0
+
+
+async def test_exactly_one_audit_row_lands_per_failed_run(session_factory, db_session):
+    async def job(session):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        await run_job(session_factory, "fred", "macro", job, calls_used=lambda: 2)
+
+    rows = (await db_session.execute(
+        select(IngestRun).where(IngestRun.source == "fred"))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].api_calls_used == 2
+
+
+async def test_a_failing_audit_write_never_replaces_the_original_exception():
+    """Last-ditch guard: if even the failure row cannot be written, the operator
+    must still see what actually went wrong, with the audit failure attached.
+    """
+
+    class BrokenSession:
+        def add(self, obj):
+            pass
+
+        async def flush(self):
+            pass
+
+        async def rollback(self):
+            pass
+
+        async def commit(self):
+            raise OSError("connection to the database is gone")
+
+    class _Factory:
+        def __call__(self):
+            class _Ctx:
+                async def __aenter__(self_inner):
+                    return BrokenSession()
+
+                async def __aexit__(self_inner, *exc):
+                    return False
+
+            return _Ctx()
+
+    async def job(session):
+        raise RuntimeError("the real problem")
+
+    with pytest.raises(RuntimeError, match="the real problem") as caught:
+        await run_job(_Factory(), "fred", "macro", job)
+
+    notes = getattr(caught.value, "__notes__", [])
+    assert any("audit row could not be written" in note for note in notes)
