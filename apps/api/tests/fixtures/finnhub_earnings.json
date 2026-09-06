@@ -1,0 +1,14 @@
+{
+  "earningsCalendar": [
+    {
+      "date": "2024-05-02", "epsActual": 1.53, "epsEstimate": 1.5,
+      "hour": "amc", "quarter": 2, "revenueActual": 90753000000,
+      "revenueEstimate": 90005000000, "symbol": "AAPL", "year": 2024
+    },
+    {
+      "date": "2024-05-09", "epsActual": null, "epsEstimate": 2.02,
+      "hour": "bmo", "quarter": 2, "revenueActual": null,
+      "revenueEstimate": 61000000000, "symbol": "MSFT", "year": 2024
+    }
+  ]
+}
