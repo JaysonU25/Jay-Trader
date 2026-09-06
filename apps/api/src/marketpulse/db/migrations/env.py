@@ -18,6 +18,7 @@ if config.config_file_name is not None:
 
 from marketpulse.config import get_settings
 from marketpulse.db.models import Base
+from marketpulse.db.session import make_engine
 
 # add your model's MetaData object here
 # for 'autogenerate' support
@@ -67,11 +68,11 @@ async def run_async_migrations() -> None:
 
     """
 
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    # Build the engine through make_engine rather than async_engine_from_config
+    # so migrations inherit the pooled-endpoint connect args. Running alembic
+    # against a PgBouncer host without them fails intermittently on prepared
+    # statements, which reads as a flaky migration rather than a config problem.
+    connectable = make_engine(config.get_main_option("sqlalchemy.url"))
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
