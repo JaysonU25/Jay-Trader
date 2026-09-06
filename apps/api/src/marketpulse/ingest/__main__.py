@@ -13,14 +13,29 @@ async def _execute(jobs: tuple[str, ...], full: bool) -> None:
     settings = get_settings()
     engine = make_engine(settings.database_url)
     session_factory = make_session_factory(engine)
+    succeeded: list[str] = []
+    failed: list[str] = []
     try:
         for job in jobs:
             typer.echo(f"running {job} (full={full}) ...")
-            run_id = await run_source(job, full=full, session_factory=session_factory,
-                                      settings=settings)
+            try:
+                run_id = await run_source(job, full=full, session_factory=session_factory,
+                                          settings=settings)
+            except Exception as exc:
+                typer.echo(f"  FAILED: {exc}")
+                failed.append(job)
+                continue
             typer.echo(f"  ingest_run id={run_id}")
+            succeeded.append(job)
     finally:
         await engine.dispose()
+
+    typer.echo(
+        f"summary: {len(succeeded)} succeeded ({', '.join(succeeded) or 'none'}), "
+        f"{len(failed)} failed ({', '.join(failed) or 'none'})"
+    )
+    if failed:
+        raise typer.Exit(code=1)
 
 
 @app.command()

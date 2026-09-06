@@ -73,3 +73,44 @@ async def test_build_client_returns_the_right_class_per_source(db_session, setti
             await build_client("frankfurter", http, db_session, settings),
             FrankfurterClient,
         )
+
+
+def test_execute_continues_past_a_failing_job_and_exits_nonzero(monkeypatch):
+    """--source all must not abort the whole run when one job fails.
+
+    Regression test for the CLI review finding: a failing job used to kill the
+    process before any later job in JOB_NAMES order ever ran.
+    """
+    from typer.testing import CliRunner
+
+    from marketpulse.config import get_settings
+    from marketpulse.ingest import __main__ as cli_main
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/db")
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "av")
+    monkeypatch.setenv("FRED_API_KEY", "fred")
+    monkeypatch.setenv("FINNHUB_API_KEY", "fh")
+    monkeypatch.setenv("INGEST_HMAC_SECRET", "secret")
+    get_settings.cache_clear()
+
+    ran: list[str] = []
+
+    async def fake_run_source(job, *, full, session_factory, settings):
+        ran.append(job)
+        if job == "macro":
+            raise RuntimeError("fred is down")
+        return 1
+
+    monkeypatch.setattr(cli_main, "run_source", fake_run_source)
+
+    try:
+        result = CliRunner().invoke(cli_main.app, ["backfill", "--source", "all"])
+    finally:
+        get_settings.cache_clear()
+
+    # Every job still ran, including everything after the one that failed.
+    assert ran == list(JOB_NAMES)
+    assert result.exit_code == 1
+    assert "FAILED" in result.stdout
+    assert "summary" in result.stdout
+    assert "macro" in result.stdout

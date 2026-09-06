@@ -28,12 +28,15 @@ HISTORY = [
 
 
 class FakeCoinGecko:
-    def __init__(self, *, fail_on: set[str] | None = None) -> None:
+    def __init__(self, *, fail_on: set[str] | None = None, fail_top_markets: bool = False) -> None:
         self.fail_on = fail_on or set()
+        self.fail_top_markets = fail_top_markets
         self.calls_made = 0
 
     async def fetch_top_markets(self, limit: int = 20) -> list[CoinSnapshot]:
         self.calls_made += 1
+        if self.fail_top_markets:
+            raise RuntimeError("upstream 503")
         return SNAPSHOTS[:limit]
 
     async def fetch_history(self, coin_id: str) -> list[CoinHistoryPoint]:
@@ -57,6 +60,16 @@ async def test_snapshot_creates_three_series_per_coin(db_session):
 async def test_snapshot_uses_a_single_api_call(db_session):
     result = await ingest_crypto_snapshot(db_session, FakeCoinGecko(), limit=2)
     assert result.api_calls_used == 1
+
+
+async def test_snapshot_failure_on_top_markets_is_recorded_not_raised(db_session):
+    result = await ingest_crypto_snapshot(
+        db_session, FakeCoinGecko(fail_top_markets=True), limit=2
+    )
+
+    assert result.rows_upserted == 0
+    assert len(result.errors) == 1
+    assert "top_markets" in result.errors[0]
 
 
 async def test_history_writes_one_observation_per_metric_per_day(db_session):

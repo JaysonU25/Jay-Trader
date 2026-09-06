@@ -22,7 +22,10 @@ async def _series_id(session: AsyncSession, coin_id: str, name: str, metric: str
 
 
 async def ingest_crypto_snapshot(session: AsyncSession, client, limit: int) -> JobResult:
-    coins = await client.fetch_top_markets(limit=limit)
+    try:
+        coins = await client.fetch_top_markets(limit=limit)
+    except Exception as exc:
+        return JobResult(api_calls_used=client.calls_made, errors=[f"top_markets: {exc}"])
 
     rows = 0
     for coin in coins:
