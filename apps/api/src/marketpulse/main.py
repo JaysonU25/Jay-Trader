@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from marketpulse.api import deps
 from marketpulse.api.cache import CacheControlMiddleware
 from marketpulse.api.routes import (
-    assets, crypto, dashboard, fx, health, news, series, status,
+    assets, crypto, dashboard, fx, health, internal, news, series, status,
 )
 from marketpulse.config import get_settings
 from marketpulse.db.session import make_engine, make_session_factory
@@ -46,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(news.router, prefix="/v1")
     app.include_router(status.router, prefix="/v1")
     app.include_router(dashboard.router, prefix="/v1")
+    app.include_router(internal.router, prefix="/internal")
     return app
 
 
