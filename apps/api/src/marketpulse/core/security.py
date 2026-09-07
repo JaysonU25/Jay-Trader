@@ -12,6 +12,9 @@ def sign(secret: str, timestamp: str, source: str) -> str:
     return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
 
+MAX_CLOCK_SKEW_SECONDS = 30
+
+
 def verify(
     secret: str,
     timestamp: str,
@@ -25,7 +28,10 @@ def verify(
 
     The timestamp is part of the signed message, so it cannot be edited without
     invalidating the signature; bounding its age then caps how long a captured
-    request stays replayable. The comparison is constant-time.
+    request stays replayable. Per spec 7.1, "more than max_age_seconds old" is
+    rejected on the past side; the future side gets only a small clock-skew
+    allowance, not the same window, or the effective replay window would be
+    doubled. The comparison is constant-time.
     """
     try:
         issued = float(timestamp)
@@ -33,7 +39,8 @@ def verify(
         raise SignatureError("malformed timestamp") from None
 
     current = time.time() if now is None else now
-    if abs(current - issued) > max_age_seconds:
+    age = current - issued
+    if age > max_age_seconds or age < -MAX_CLOCK_SKEW_SECONDS:
         raise SignatureError("timestamp outside the replay window")
 
     if not hmac.compare_digest(sign(secret, timestamp, source), signature):

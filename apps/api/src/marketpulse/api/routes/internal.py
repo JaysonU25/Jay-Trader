@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 
+from marketpulse.api.errors import UNAUTHORIZED_RESPONSE, not_found
 from marketpulse.config import get_settings
 from marketpulse.core.security import SignatureError, verify
 from marketpulse.db.session import make_engine, make_session_factory
@@ -25,7 +26,9 @@ async def _run(job: str) -> None:
         await engine.dispose()
 
 
-@router.post("/ingest/{source}", status_code=202)
+@router.post(
+    "/ingest/{source}", status_code=202, responses=UNAUTHORIZED_RESPONSE
+)
 async def trigger_ingest(
     source: str,
     background: BackgroundTasks,
@@ -42,7 +45,8 @@ async def trigger_ingest(
         raise HTTPException(status_code=401, detail="unauthorized") from None
 
     if source not in JOB_NAMES:
-        raise HTTPException(status_code=404, detail="unknown job")
+        # Past signature verification, so this path is not security-opaque.
+        raise not_found("job", source)
 
     background.add_task(_run, source)
     return {"accepted": True, "job": source}

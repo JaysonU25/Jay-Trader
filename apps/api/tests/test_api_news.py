@@ -3,12 +3,13 @@ from decimal import Decimal
 
 import pytest
 
-from marketpulse.db.models import AnalystRating, EarningsCalendar, News
+from marketpulse.db.models import AnalystRating, Asset, EarningsCalendar, News
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
 async def seed(db_session):
+    db_session.add(Asset(symbol="AAPL", name="Apple Inc."))
     now = datetime.now(timezone.utc)
     db_session.add_all([
         News(symbol="AAPL", published_at=now - timedelta(hours=1),
@@ -73,4 +74,15 @@ async def test_ratings_for_a_symbol(client, db_session):
 
 async def test_ratings_for_an_unrated_symbol_is_an_empty_list(client, db_session):
     await seed(db_session)
-    assert (await client.get("/v1/ratings/ZZZZ")).json() == []
+    db_session.add(Asset(symbol="ZZZZ", name="Unrated Co"))
+    await db_session.flush()
+    response = await client.get("/v1/ratings/ZZZZ")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_ratings_for_an_untracked_symbol_is_404(client, db_session):
+    await seed(db_session)
+    response = await client.get("/v1/ratings/NOPE")
+    assert response.status_code == 404
+    assert response.json()["detail"]["resource"] == "symbol"

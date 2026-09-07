@@ -1,18 +1,20 @@
+import math
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from marketpulse.api.deps import get_session
-from marketpulse.api.errors import not_found
+from marketpulse.api.errors import NOT_FOUND_RESPONSE, not_found
 from marketpulse.api.schemas import FxConversionOut
 from marketpulse.db.models import Observation, Series
 
 router = APIRouter(tags=["fx"])
 
 BASE = "EUR"
+SOURCE = "frankfurter"
 
 
 async def _rate_on(
@@ -28,14 +30,18 @@ async def _rate_on(
 
     series_id = (
         await session.execute(
-            select(Series.id).where(Series.external_id == f"{BASE}/{currency}")
+            select(Series.id).where(
+                Series.source == SOURCE, Series.external_id == f"{BASE}/{currency}"
+            )
         )
     ).scalar_one_or_none()
     if series_id is None:
         return None
 
     statement = select(Observation.value, Observation.obs_date).where(
-        Observation.series_id == series_id, Observation.value.is_not(None)
+        Observation.series_id == series_id,
+        Observation.value.is_not(None),
+        Observation.value != 0,
     )
     if on is not None:
         statement = statement.where(Observation.obs_date <= on)
@@ -46,11 +52,13 @@ async def _rate_on(
     return (row[0], row[1]) if row else (None, None)
 
 
-@router.get("/fx/convert", response_model=FxConversionOut)
+@router.get(
+    "/fx/convert", response_model=FxConversionOut, responses=NOT_FOUND_RESPONSE
+)
 async def convert(
     from_currency: str = Query(..., alias="from", min_length=3, max_length=3),
     to_currency: str = Query(..., alias="to", min_length=3, max_length=3),
-    amount: float = Query(1.0),
+    amount: float = Query(1.0, allow_inf_nan=False),
     on: date | None = Query(None, alias="date"),
     session: AsyncSession = Depends(get_session),
 ):
@@ -74,9 +82,14 @@ async def convert(
 
     (source_rate, source_date), (target_rate, target_date) = resolved
     rate = float(target_rate) / float(source_rate)
+    result = amount * rate
+    if not math.isfinite(result):
+        raise HTTPException(
+            status_code=422, detail="conversion result is not finite"
+        )
 
     return FxConversionOut(
         from_currency=source, to_currency=target, amount=amount,
-        rate=rate, result=amount * rate,
+        rate=rate, result=result,
         rate_date=min(source_date, target_date),
     )

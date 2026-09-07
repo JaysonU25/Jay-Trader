@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from marketpulse.api.deps import get_session
-from marketpulse.api.errors import not_found
+from marketpulse.api.errors import NOT_FOUND_RESPONSE, not_found
 from marketpulse.api.schemas import ObservationOut, SeriesOut
 from marketpulse.db.models import Observation, Series
 
@@ -19,7 +19,7 @@ async def list_series(
 ):
     statement = select(Series)
     if category is not None:
-        statement = statement.where(Series.category == category)
+        statement = statement.where(Series.category == category.lower())
     rows = await session.execute(statement.order_by(Series.source, Series.external_id))
     return rows.scalars().all()
 
@@ -28,6 +28,7 @@ async def list_series(
 @router.get(
     "/series/{source}/{external_id:path}/observations",
     response_model=list[ObservationOut],
+    responses=NOT_FOUND_RESPONSE,
 )
 async def get_observations(
     source: str,
@@ -36,10 +37,12 @@ async def get_observations(
     date_to: date | None = Query(None, alias="to"),
     session: AsyncSession = Depends(get_session),
 ):
+    # external_id is left as-is: it is case-significant data (EUR/USD,
+    # bitcoin:price), unlike source/category which are stored lower-case.
     series_id = (
         await session.execute(
             select(Series.id).where(
-                Series.source == source, Series.external_id == external_id
+                Series.source == source.lower(), Series.external_id == external_id
             )
         )
     ).scalar_one_or_none()

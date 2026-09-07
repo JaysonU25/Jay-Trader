@@ -115,3 +115,67 @@ database with only the `fx` source backfilled (~46 series, ~265,615 observations
   the internal ingest route correctly documents `202` rather than `200`. `/docs` renders.
 - **Full suite still green:** 211 passed against the local test Postgres, no regressions
   from the read-side work.
+
+## Read API — final review fix wave (2026-09-07)
+
+Ten tasks were individually reviewed; the final whole-branch review found four blockers
+plus several important/minor issues. All were fixed in one consolidated pass (233 tests
+passing, up from 211).
+
+**Blockers fixed:**
+- `/v1/fx/convert`'s `amount` query param now rejects `nan`/`inf` (`allow_inf_nan=False`,
+  422), and the computed `result` is checked with `math.isfinite` post-multiplication so a
+  finite-but-huge `amount` (e.g. `1e308`) that overflows to `inf` also 422s instead of
+  serializing as `null` into a non-nullable float field. `clients/fred.py`'s `_to_decimal`
+  now also rejects non-finite `Decimal`s (`NaN`/`Infinity`) the same way it already
+  rejected FRED's `"."` sentinel, so a NaN observation can't reach `SparklineOut.points`.
+- The internal-ingest test suite no longer risks building a real engine against the
+  production database URL: the success-path test now monkeypatches `_run` itself rather
+  than `run_source`, so the background task body never executes in tests. Separate focused
+  tests exercise `_run` directly (patching `make_engine`/`run_source`) to prove the engine
+  is disposed on both the success and exception paths — the `finally` guarantee is now
+  under test.
+- `/v1/ratings/{symbol}` now 404s for an untracked symbol (pre-checks `Asset.symbol`,
+  matching `/v1/prices/{symbol}`'s semantics) while still returning `200 []` for a tracked
+  symbol with no ratings. Every route that can 404 (`prices`, `ratings`, series
+  observations, `fx/convert`) now declares a 404 response in its OpenAPI via a shared
+  `NOT_FOUND_RESPONSE`; `POST /internal/ingest/{source}` declares 401 via
+  `UNAUTHORIZED_RESPONSE`. Both are asserted against `/openapi.json`.
+- Removed the three branch-introduced `F401` unused imports (`func` in `crypto.py`, two in
+  `test_api_schemas.py`); confirmed clean with `ruff check --select F401 .`.
+
+**Important/minor fixed:**
+- `IngestRunOut.error` is now sanitized at the read boundary (a `field_validator`, first
+  line only, capped at 200 chars) so a raw exception message — potentially containing SQL
+  text, bound parameters, or a vendor API key embedded in a URL — can never sit behind
+  `/v1/status`'s or `/v1/dashboard`'s hour-long edge cache. The stored value is untouched.
+- `core/security.py`'s replay window was accepting timestamps up to 300s in the *future* on
+  top of 300s in the past (an effective ~600s window against spec §7.1's 300s). Now the
+  past bound stays at `max_age_seconds` and the future side gets a fixed 30s clock-skew
+  allowance only.
+- `/v1/fx/convert`'s rate lookup now filters on `Series.source == "frankfurter"` in addition
+  to `external_id`, so a second source writing the same `external_id` can't trigger
+  `MultipleResultsFound` (500). The observation query also excludes `value == 0`, closing
+  an uncaught `ZeroDivisionError` path.
+- `POST /internal/ingest/{source}`'s unknown-job 404 now uses the shared `not_found()` body
+  instead of a bare string, matching every other 404 in the API (this path is past
+  signature verification, so it isn't part of the deliberately-opaque 401 surface).
+- `/v1/series` and `/v1/series/{source}/{external_id}/observations` now lower-case
+  `category`/`source` before querying (both are stored lower-case), so a display-cased
+  value from a frontend dropdown no longer silently returns an empty result.
+  `external_id` is deliberately left as-is since it's case-significant data.
+- Encoded two previously-unwritten-but-confirmed crypto behaviors: a coin with only a price
+  series (no market cap/volume) is returned, not dropped, with those fields `null`; a coin
+  with a `NULL` market cap sorts last rather than first.
+
+**Out of scope, deliberately deferred** (unchanged from before, plus confirmed still
+applicable): the dashboard N+1 and its Neon cold-start floor; macro sparklines dropping
+NULLs and `points` carrying no dates; sparkline labels using `external_id`/`symbol` instead
+of `name`; `change_pct: 0.0` for a single-point series; `/v1/health` being edge-cached;
+unbounded `/v1/prices`/observations payloads; default `operationId`s; inverted date ranges
+returning `[]`; `date.today()` being server-local; the CORS `Vary: Origin` interaction with
+edge caching; per-source in-flight locking on `/internal/ingest`; the dashboard duplicating
+the status and earnings queries; `crypto.py` producing a phantom coin for a colon-less
+`external_id`; `/internal/ingest/all` returning 404; the suite requiring a populated `.env`.
+A shared `get_or_404` helper was also deliberately not extracted — Fix 3 above resolves the
+divergence it would have existed to prevent.

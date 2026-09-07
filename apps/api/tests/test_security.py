@@ -45,6 +45,19 @@ def test_a_clock_skewed_future_timestamp_is_still_bounded():
         verify(SECRET, "2000", "fred", sig, now=1000.0)
 
 
+def test_a_timestamp_250_seconds_in_the_future_is_rejected():
+    """The future side only gets a small clock-skew allowance, not the full
+    300s window — otherwise the effective replay window would be ~600s."""
+    sig = sign(SECRET, "1250", "fred")
+    with pytest.raises(SignatureError):
+        verify(SECRET, "1250", "fred", sig, now=1000.0)
+
+
+def test_a_timestamp_10_seconds_in_the_future_is_accepted():
+    sig = sign(SECRET, "1010", "fred")
+    verify(SECRET, "1010", "fred", sig, now=1000.0)
+
+
 def test_a_non_numeric_timestamp_is_rejected():
     with pytest.raises(SignatureError):
         verify(SECRET, "not-a-number", "fred", "x", now=1000.0)

@@ -5,8 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from marketpulse.api.deps import get_session
+from marketpulse.api.errors import NOT_FOUND_RESPONSE, not_found
 from marketpulse.api.schemas import EarningsOut, NewsOut, RatingOut
-from marketpulse.db.models import AnalystRating, EarningsCalendar, News
+from marketpulse.db.models import AnalystRating, Asset, EarningsCalendar, News
 
 router = APIRouter(tags=["events"])
 
@@ -43,8 +44,16 @@ async def upcoming_earnings(
     return rows.scalars().all()
 
 
-@router.get("/ratings/{symbol}", response_model=list[RatingOut])
+@router.get(
+    "/ratings/{symbol}", response_model=list[RatingOut], responses=NOT_FOUND_RESPONSE
+)
 async def ratings(symbol: str, session: AsyncSession = Depends(get_session)):
+    asset_id = (
+        await session.execute(select(Asset.id).where(Asset.symbol == symbol.upper()))
+    ).scalar_one_or_none()
+    if asset_id is None:
+        raise not_found("symbol", symbol)
+
     rows = await session.execute(
         select(AnalystRating)
         .where(AnalystRating.symbol == symbol.upper())

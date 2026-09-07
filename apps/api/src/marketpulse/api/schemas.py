@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class _Base(BaseModel):
@@ -95,6 +95,21 @@ class IngestRunOut(_Base):
     rows_upserted: int
     api_calls_used: int
     error: str | None = None
+
+    @field_validator("error", mode="before")
+    @classmethod
+    def _sanitize_error(cls, value: str | None) -> str | None:
+        """Cap what a public, edge-cached route can leak from a stored error.
+
+        Ingest errors may embed statement text, bound parameters, or (via
+        httpx's HTTPStatusError) a full request URL with an API key in the
+        query string. Keep only the first line, capped at 200 characters, so
+        the read boundary is safe regardless of what ingest stores.
+        """
+        if value is None:
+            return None
+        first_line = value.splitlines()[0] if value else value
+        return first_line[:200]
 
 
 class SparklineOut(_Base):

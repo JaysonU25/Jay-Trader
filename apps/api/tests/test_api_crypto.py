@@ -67,3 +67,33 @@ async def test_uses_the_most_recent_observation_per_coin(client, db_session):
 
 async def test_no_crypto_data_returns_an_empty_list(client, db_session):
     assert (await client.get("/v1/crypto/top")).json() == []
+
+
+async def add_price_only_coin(db_session, coin_id, name, price, day=date(2024, 5, 1)):
+    """A coin with only a price series (no market_cap, no volume observed)."""
+    series = Series(source="coingecko", external_id=f"{coin_id}:price",
+                     name=f"{name} price", unit="USD", frequency="D",
+                     category="crypto")
+    db_session.add(series)
+    await db_session.flush()
+    db_session.add(Observation(series_id=series.id, obs_date=day, value=Decimal(price)))
+    await db_session.flush()
+
+
+async def test_a_coin_with_only_a_price_series_is_not_dropped(client, db_session):
+    await add_price_only_coin(db_session, "dogecoin", "Dogecoin", "0.12")
+    body = (await client.get("/v1/crypto/top")).json()
+    assert len(body) == 1
+    assert body[0]["coin_id"] == "dogecoin"
+    assert body[0]["price_usd"] == 0.12
+    assert body[0]["market_cap_usd"] is None
+    assert body[0]["volume_24h_usd"] is None
+
+
+async def test_a_null_market_cap_sorts_last(client, db_session):
+    """A regression putting nulls first would rank an unknown coin above
+    Bitcoin on the dashboard."""
+    await add_coin(db_session, "bitcoin", "Bitcoin", "62500", "1231000000000", "1")
+    await add_price_only_coin(db_session, "mystery", "Mystery Coin", "1.00")
+    body = (await client.get("/v1/crypto/top")).json()
+    assert [c["coin_id"] for c in body] == ["bitcoin", "mystery"]

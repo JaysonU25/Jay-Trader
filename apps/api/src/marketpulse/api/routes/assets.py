@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from marketpulse.api.deps import get_session
-from marketpulse.api.errors import not_found
+from marketpulse.api.errors import NOT_FOUND_RESPONSE, not_found
 from marketpulse.api.schemas import AssetOut, PriceBarOut
 from marketpulse.db.models import Asset, PriceDaily
 
@@ -18,7 +18,9 @@ async def list_assets(session: AsyncSession = Depends(get_session)):
     return rows.scalars().all()
 
 
-@router.get("/prices/{symbol}", response_model=list[PriceBarOut])
+@router.get(
+    "/prices/{symbol}", response_model=list[PriceBarOut], responses=NOT_FOUND_RESPONSE
+)
 async def get_prices(
     symbol: str,
     date_from: date | None = Query(None, alias="from"),

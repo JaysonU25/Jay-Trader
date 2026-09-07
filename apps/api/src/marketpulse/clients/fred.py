@@ -65,6 +65,9 @@ def _to_decimal(raw: str) -> Decimal | None:
     if raw in (".", "", None):
         return None
     try:
-        return Decimal(raw)
+        value = Decimal(raw)
     except InvalidOperation:
         return None
+    if not value.is_finite():
+        return None
+    return value

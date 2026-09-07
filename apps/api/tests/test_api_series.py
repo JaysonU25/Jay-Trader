@@ -68,3 +68,16 @@ async def test_unknown_series_is_404(client, db_session):
     response = await client.get("/v1/series/fred/NOPE/observations")
     assert response.status_code == 404
     assert response.json()["detail"]["resource"] == "series"
+
+
+async def test_category_filter_is_case_insensitive(client, db_session):
+    await seed(db_session)
+    body = (await client.get("/v1/series?category=FX")).json()
+    assert [s["external_id"] for s in body] == ["EUR/USD"]
+
+
+async def test_source_lookup_is_case_insensitive(client, db_session):
+    await seed(db_session)
+    response = await client.get("/v1/series/FRANKFURTER/EUR/USD/observations")
+    assert response.status_code == 200
+    assert [o["obs_date"] for o in response.json()] == ["2024-01-02", "2024-01-03"]

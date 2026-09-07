@@ -63,6 +63,14 @@ async def test_api_key_and_file_type_are_sent(fixture_path):
     assert request_url.params["series_id"] == "CPIAUCSL"
 
 
+def test_to_decimal_treats_nan_as_a_missing_observation():
+    from marketpulse.clients.fred import _to_decimal
+
+    assert _to_decimal("NaN") is None
+    assert _to_decimal("Infinity") is None
+    assert _to_decimal("-Infinity") is None
+
+
 @respx.mock
 async def test_start_date_becomes_observation_start(fixture_path):
     payload = json.loads((fixture_path / "fred_observations.json").read_text())

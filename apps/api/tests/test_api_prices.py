@@ -61,3 +61,9 @@ async def test_a_known_symbol_with_no_bars_is_an_empty_list_not_404(client, db_s
     response = await client.get("/v1/prices/MSFT")
     assert response.status_code == 200
     assert response.json() == []
+
+
+async def test_openapi_declares_a_404_on_prices_by_symbol(client):
+    spec = (await client.get("/openapi.json")).json()
+    responses = spec["paths"]["/v1/prices/{symbol}"]["get"]["responses"]
+    assert "404" in responses
