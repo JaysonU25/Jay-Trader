@@ -73,3 +73,45 @@ recorded fixture and a live vendor, and are the things to watch on the first rea
   tokens/minute against a 60/min vendor limit. Spec §5.4 specifies one bucket per source.
   Safe at current volume (31 calls total) and no daily-cap source is affected, but it stops
   being safe if the universe grows.
+
+## Read API — live verification (Task 10, 2026-09-06/07)
+
+Ran the API (`uv run uvicorn marketpulse.main:app --port 8000`) against the live Neon
+database with only the `fx` source backfilled (~46 series, ~265,615 observations,
+1999-01-04 to 2026-09-04; `asset`, `price_daily`, FRED/crypto series, `news`,
+`earnings_calendar`, and `analyst_rating` all empty). Full request/response log is in
+`.superpowers/sdd/2026-09-06-read-api/task-10-report.md`.
+
+- **No 500s anywhere.** Every route with no ingested data (`/v1/assets`,
+  `/v1/crypto/top`, `/v1/news`, `/v1/earnings/upcoming`, `/v1/ratings/{symbol}`) returned
+  200 with `[]`. `/v1/dashboard` returned 200 with empty `markets`/`macro`/`crypto`/
+  `upcoming_earnings` and a populated `pipeline` (the one real `fx` ingest run).
+  `/v1/prices/AAPL` correctly 404s (`not_found`, resource `symbol`) since `asset` is
+  empty — a single-resource lookup, not a list, so 404 rather than `[]` is correct
+  per `errors.py`/`assets.py`.
+- **`/v1/fx/convert` cross-rate checks out.** Verified `USD→JPY` by hand against the
+  stored EUR-denominated rates: on 2026-09-04, EUR/USD = 1.1622 and EUR/JPY = 181.59,
+  and `EUR/JPY ÷ EUR/USD` = 156.247, matching the API's returned rate
+  (156.24677336086734) to full precision. Not inverted, not stale.
+- **Cache-Control is correctly conditional.** `public, s-maxage=3600` appears on every
+  200 GET and is absent on the 404 from `/v1/prices/{symbol}` — by design
+  (`CacheControlMiddleware` only sets it for `status_code == 200`), so an error is never
+  pinned at Cloudflare's edge for an hour.
+- **Dashboard timing — floor only, not full-universe.** `/v1/dashboard` averaged
+  **~1.2s** (1.19s, 1.24s, 1.19s across three runs) against the live Neon instance with
+  **zero** assets and **zero** FRED series loaded, i.e. the per-asset/per-series query
+  loop in Task 8 executed zero times. This is strictly a floor: the brief estimates
+  ~35 round trips once assets, FRED series, crypto, and earnings are all backfilled, and
+  none of the per-item cost is reflected in this number yet. 1.2s already for `pipeline`
+  and the four empty aggregation queries alone is worth watching — if scale-to-zero
+  cold-start dominates, adding 30+ more round trips per dashboard load in the full-universe
+  case is a realistic path past 2s, and would be worth collapsing into a single windowed
+  query per section (e.g. one query for all tracked assets' latest+prior close, one for all
+  FRED series' latest observation) rather than one query per row.
+- **OpenAPI contract is complete.** All 13 routes (12 `/v1/*` GETs plus
+  `POST /internal/ingest/{source}`) appear in `/openapi.json` with typed response models
+  (`AssetOut`, `CoinOut`, `DashboardOut`, `EarningsOut`, `FxConversionOut`,
+  `IngestRunOut`, `NewsOut`, `ObservationOut`, `PriceBarOut`, `RatingOut`, `SeriesOut`);
+  the internal ingest route correctly documents `202` rather than `200`. `/docs` renders.
+- **Full suite still green:** 211 passed against the local test Postgres, no regressions
+  from the read-side work.
