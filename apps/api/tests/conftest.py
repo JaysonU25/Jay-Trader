@@ -49,3 +49,26 @@ async def db_session(db_engine):
 def fixture_path():
     from pathlib import Path
     return Path(__file__).parent / "fixtures"
+
+
+@pytest_asyncio.fixture
+async def client(db_session):
+    """An HTTP client bound to the app, sharing the test's transaction.
+
+    Overriding get_session with the fixture session means requests see rows the
+    test inserted but never committed, and everything rolls back afterwards.
+    """
+    import httpx
+
+    from marketpulse.api import deps
+    from marketpulse.main import create_app
+
+    app = create_app()
+
+    async def override():
+        yield db_session
+
+    app.dependency_overrides[deps.get_session] = override
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
