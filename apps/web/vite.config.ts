@@ -8,6 +8,15 @@ export default defineConfig({
   resolve: {
     alias: { "@": "/src" },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // ECharts is ~2/3 of the bundle and only the chart views need it.
+        // Splitting it keeps the shell and the two table-only views light.
+        manualChunks: { echarts: ["echarts/core", "echarts/charts", "echarts/components", "echarts/renderers"] },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: "jsdom",

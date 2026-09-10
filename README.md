@@ -1,10 +1,12 @@
 # Market Pulse
 
-Aggregates five free financial APIs into one Postgres database and serves them
-through a FastAPI read API. Frontend and Cloudflare deployment are not built yet.
+Aggregates five free financial APIs into one Postgres database, serves them
+through a FastAPI read API, and renders them in a React SPA. Cloudflare
+deployment is not built yet.
 
 - Design spec: [`docs/superpowers/specs/2026-09-05-market-pulse-design.md`](docs/superpowers/specs/2026-09-05-market-pulse-design.md)
 - API reference: [`apps/api/README.md`](apps/api/README.md)
+- Frontend reference: [`apps/web/README.md`](apps/web/README.md)
 - Known follow-ups: [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)
 
 | Source | Data | Job name |
@@ -47,6 +49,17 @@ uv run uvicorn marketpulse.main:app --reload --port 8000
 
 Drop `--reload` when you want it quiet; add `--log-level warning` to suppress
 access logs.
+
+Then, in a second shell, the frontend:
+
+```bash
+cd apps/web
+npm install
+echo "VITE_API_BASE=http://127.0.0.1:8000" > .env.local
+npm run dev
+```
+
+- Frontend: <http://localhost:5173>
 
 ---
 
@@ -123,17 +136,26 @@ spend tomorrow's budget.
 
 ## Tests
 
+Backend — 233 tests, roughly 8 seconds, no network access. Requires the local
+Postgres on port 5433:
+
 ```bash
 cd apps/api
 uv run pytest -q
 ```
 
-233 tests, roughly 8 seconds, no network access. Requires the local Postgres on
-port 5433. Override with `TEST_DATABASE_URL` if yours differs:
+Override the test database with `TEST_DATABASE_URL` if yours differs:
 
 ```bash
 TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5433/marketpulse_test \
   uv run pytest -v
+```
+
+Frontend — 60 tests, MSW-backed, no network and no database:
+
+```bash
+cd apps/web
+npm test
 ```
 
 ---
@@ -143,17 +165,24 @@ TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5433/marketpulse_test
 ```
 market-pulse/
 ├── apps/
-│   └── api/                      # FastAPI backend
-│       ├── src/marketpulse/
-│       │   ├── clients/          # HTTP -> typed records. Never touches the DB.
-│       │   ├── ingest/           # records -> upserts. Never makes HTTP calls.
-│       │   ├── api/routes/       # DB -> JSON. Never calls a vendor.
-│       │   ├── core/             # rate limiting, HMAC verification
-│       │   └── db/               # models, session, migrations
+│   ├── api/                      # FastAPI backend
+│   │   ├── src/marketpulse/
+│   │   │   ├── clients/          # HTTP -> typed records. Never touches the DB.
+│   │   │   ├── ingest/           # records -> upserts. Never makes HTTP calls.
+│   │   │   ├── api/routes/       # DB -> JSON. Never calls a vendor.
+│   │   │   ├── core/             # rate limiting, HMAC verification
+│   │   │   └── db/               # models, session, migrations
+│   │   └── tests/
+│   └── web/                      # React SPA
+│       ├── src/
+│       │   ├── lib/              # types, fetch client, query hooks, theme
+│       │   ├── charts/           # ECharts wrapper + pure option builders
+│       │   ├── components/       # tiles, tables, states, chart frame
+│       │   └── views/            # the seven pages
 │       └── tests/
 └── docs/
     ├── FOLLOWUPS.md
     └── superpowers/{specs,plans}/
 ```
 
-Not built yet: `apps/web` (React SPA) and `apps/cron` (Cloudflare Worker).
+Not built yet: `apps/cron` (Cloudflare Worker).
