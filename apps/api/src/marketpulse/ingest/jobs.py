@@ -51,7 +51,7 @@ async def build_client(
     if source == "finnhub":
         return FinnhubClient(http, settings.finnhub_api_key, limiter)
     if source == "coingecko":
-        return CoinGeckoClient(http, limiter)
+        return CoinGeckoClient(http, limiter, settings.coingecko_api_key)
     if source == "frankfurter":
         return FrankfurterClient(http, limiter)
     raise KeyError(f"unknown source {source}")

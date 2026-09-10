@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     alphavantage_api_key: str
     fred_api_key: str
     finnhub_api_key: str
+    # Optional: /coins/markets answers anonymously, but /coins/{id}/market_chart
+    # returns 401 without a key, which is the whole crypto backfill.
+    coingecko_api_key: str | None = None
     ingest_hmac_secret: str
     cors_origins: Annotated[list[str], NoDecode] = []
 

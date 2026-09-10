@@ -77,7 +77,9 @@ async def test_fetch_history_does_not_send_the_interval_parameter(fixture_path):
 
     params = route.calls[0].request.url.params
     assert "interval" not in params
-    assert params["days"] == "max"
+    # 365, not max: the public API refuses anything longer with a 401 and
+    # error_code 10012, regardless of whether a key is present.
+    assert params["days"] == "365"
 
 
 @respx.mock
@@ -160,3 +162,39 @@ async def test_a_missing_market_field_becomes_none_not_zero(fixture_path):
         coins = await make_client(http).fetch_top_markets(limit=2)
 
     assert coins[0].market_cap_usd is None
+
+
+@respx.mock
+async def test_the_demo_api_key_is_sent_on_history_requests(fixture_path):
+    """market_chart returns 401 anonymously; the key is what unblocks backfill."""
+    payload = json.loads((fixture_path / "coingecko_market_chart.json").read_text())
+    route = respx.get("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart").mock(
+        return_value=httpx.Response(200, json=payload)
+    )
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    async with httpx.AsyncClient() as http:
+        client = CoinGeckoClient(
+            http=http,
+            limiter=TokenBucket(Bucket(rate=1000), sleep=no_sleep),
+            api_key="demo-key-123",
+        )
+        await client.fetch_history("bitcoin")
+
+    assert route.calls.last.request.url.params["x_cg_demo_api_key"] == "demo-key-123"
+
+
+@respx.mock
+async def test_no_key_means_no_auth_parameter(fixture_path):
+    """Anonymous stays anonymous: /coins/markets works without a key."""
+    payload = json.loads((fixture_path / "coingecko_markets.json").read_text())
+    route = respx.get("https://api.coingecko.com/api/v3/coins/markets").mock(
+        return_value=httpx.Response(200, json=payload)
+    )
+
+    async with httpx.AsyncClient() as http:
+        await make_client(http).fetch_top_markets(limit=2)
+
+    assert "x_cg_demo_api_key" not in route.calls.last.request.url.params
