@@ -75,7 +75,13 @@ async def run_source(job: str, *, full: bool, session_factory, settings: Setting
             built.append(client)
 
             if job == "prices":
-                return await ingest_prices(session, client, EQUITIES, full=full)
+                # Always compact, even for a backfill. outputsize=full moved to
+                # Alpha Vantage's premium tier, so requesting it now returns a
+                # refusal instead of data and spends a request from the 25/day
+                # budget for nothing. Compact is 100 trading days, which is all
+                # the free tier will give: equity history is shallow by vendor
+                # decision, not by choice. See docs/FOLLOWUPS.md.
+                return await ingest_prices(session, client, EQUITIES, full=False)
             if job == "macro":
                 return await ingest_macro(session, client, FRED_SERIES)
             if job == "crypto":

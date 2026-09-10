@@ -41,11 +41,17 @@ class AlphaVantageClient(BaseClient):
             },
         )
 
-        # Alpha Vantage answers a throttled request with HTTP 200 and a prose body.
-        if "Note" in payload or "Information" in payload:
-            raise RateLimitedError(
-                f"alphavantage: {payload.get('Note') or payload.get('Information')}"
-            )
+        # Alpha Vantage answers a throttled request with HTTP 200 and a prose
+        # body under "Note" or "Information" -- but it uses those same keys for
+        # entitlement refusals, which are a different thing. A throttle clears
+        # on its own; a premium-feature refusal never does. Classifying the
+        # second as a throttle makes ingest_prices break out of its loop on the
+        # first symbol, so one permanent misconfiguration kills all fifteen.
+        message = payload.get("Note") or payload.get("Information")
+        if message:
+            if "premium" in message.lower():
+                raise ApiError(f"alphavantage: {message}")
+            raise RateLimitedError(f"alphavantage: {message}")
         if "Error Message" in payload:
             raise ApiError(f"alphavantage: {payload['Error Message']}")
         if _SERIES_KEY not in payload:

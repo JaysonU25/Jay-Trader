@@ -22,19 +22,35 @@ block merge; all were surfaced by review and consciously deferred.
 
 ## Vendor unknowns that fixtures cannot verify
 
-Recorded from the final review. These are not code defects — they are the gap between a
-recorded fixture and a live vendor, and are the things to watch on the first real backfill.
+Recorded from the final review. Several have since been settled against the live vendors;
+those are marked RESOLVED with what actually happened, because in two cases the guess was
+wrong in a way worth remembering.
 
-- **Alpha Vantage response-shape drift.** Throttle detection keys on the literal strings
-  `"Note"` and `"Information"`. Alpha Vantage has changed that wording before.
+- **RESOLVED — Alpha Vantage response-shape drift.** Predicted correctly, and it bit. The
+  free tier now refuses `outputsize=full` as a premium feature, and delivers that refusal
+  under the same `"Information"` key a throttle uses. Because the client classified any
+  `"Information"` body as a throttle, `ingest_prices` broke out of its loop on the first
+  symbol and all fifteen died after one request. The client now distinguishes an
+  entitlement refusal (permanent) from a throttle (clears on its own), and the prices job
+  always requests `outputsize=compact`.
+- **RESOLVED — CoinGecko's real anonymous rate limit.** The prediction was wrong about the
+  mechanism. The crypto backfill did fail on every coin, but not from throttling and not
+  from the missing key: `days=max` is refused with **HTTP 401 and `error_code` 10012**,
+  "Public API users are limited to querying historical data within the past 365 days."
+  A 401 that means "range too long" reads exactly like an auth failure, and cost a
+  detour through API-key plumbing before the real cause surfaced. Anonymous requests at
+  `days=365` succeed. A demo key raises the rate limit but does **not** lift the range cap.
 - **Alpha Vantage's real reset clock.** `calls_used_today` buckets on UTC midnight. If the
   vendor resets on a different clock, the seeded count is off near the boundary.
-- **CoinGecko's real anonymous rate limit.** The bucket assumes 20/min; the public API is
-  known to enforce something stricter and more variable, especially from cloud IPs.
-- **FRED series IDs.** All 15 are hardcoded and have never touched the live API. A
-  discontinued ID degrades to a `partial` run rather than a crash.
-- **Finnhub free-tier gating.** The 365-day news backfill window is a common place for free
-  plans to truncate or reject outright.
+- **Alpha Vantage's per-minute pacing is tighter than the bucket assumes.** The first
+  successful prices backfill got 12 of 15 symbols before a genuine throttle
+  ("please consider spreading out your free API requests") stopped the loop. The 5/min
+  bucket permits an opening burst the vendor does not actually welcome.
+- **FRED series IDs.** All 15 are hardcoded. Confirmed working against the live API:
+  the macro backfill landed 89,819 observations across 15 series.
+- **Finnhub free-tier gating.** Partly confirmed. News backfilled fine (3,663 rows across
+  15 symbols) but the earnings calendar returned only **2 rows** for a ±90-day window,
+  which is the free plan truncating.
 
 ## Data model consequences worth knowing before the read API
 
@@ -45,7 +61,22 @@ recorded fixture and a live vendor, and are the things to watch on the first rea
 
 - **Prices are raw and unadjusted.** `TIME_SERIES_DAILY_ADJUSTED` is an Alpha Vantage
   premium endpoint, so splits appear as price discontinuities. Documented tradeoff from
-  spec §4.5 — label affected charts in the UI.
+  spec §4.5 — the Markets view carries the label.
+
+- **History depth now varies by source, and the spec's "full history" no longer holds
+  across the board.** FX reaches 1999 and FRED reaches each series' start, but equities are
+  capped at 100 trading days (`outputsize=compact`) and crypto at 365 days, both by vendor
+  paywall rather than by choice. Spec §4.5 and §5.1 assume deeper equity history than the
+  free tier will now serve. Deciding whether to pay Alpha Vantage or swap the equity source
+  (Tiingo and Stooq both offer longer free history) is an open product question.
+
+- **A long ingest job holds one transaction across every HTTP call.** `run_job` opens one
+  session and hands it to the job, which then makes 15-20 vendor requests inside it. When
+  the crypto backfill was failing slowly, Neon closed the idle connection mid-job and the
+  entire transaction was lost — including its audit row, which surfaced as a confusing
+  `InterfaceError` in place of the real per-coin errors. `pool_pre_ping` does not help:
+  it validates a connection at checkout, not one already held open. The durable fix is
+  committing per item rather than per job. Currently masked by the jobs being fast again.
 
 - **Daily FX and macro jobs rewrite full history every run.** `ingest_fx` always passes
   `FX_START` (1999-01-04) and `ingest_macro` ignores its `start` parameter, so each daily

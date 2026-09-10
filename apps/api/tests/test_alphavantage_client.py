@@ -7,7 +7,7 @@ import pytest
 import respx
 
 from marketpulse.clients.alphavantage import AlphaVantageClient
-from marketpulse.clients.base import RateLimitedError
+from marketpulse.clients.base import ApiError, RateLimitedError
 from marketpulse.core.ratelimit import Bucket, DailyCapExceeded, TokenBucket
 
 
@@ -85,3 +85,32 @@ async def test_daily_cap_stops_requests_before_they_are_sent(fixture_path):
             await make_client(http, limiter).fetch_daily("AAPL")
 
     assert route.call_count == 0
+
+
+@respx.mock
+async def test_a_premium_refusal_is_not_treated_as_a_throttle():
+    """outputsize=full moved to the premium tier and is refused under the same
+    "Information" key a throttle uses. A throttle clears on its own and makes
+    ingest_prices stop the loop; an entitlement refusal never clears, so
+    misreading it kills all fifteen symbols on the first one."""
+    respx.get("https://www.alphavantage.co/query").mock(
+        return_value=httpx.Response(200, json={
+            "Information": (
+                "Thank you for using Alpha Vantage! The outputsize=full parameter "
+                "value is a premium feature for the TIME_SERIES_DAILY endpoint."
+            )
+        })
+    )
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    async with httpx.AsyncClient() as http:
+        client = AlphaVantageClient(
+            http, "key", TokenBucket(Bucket(rate=1000), sleep=no_sleep)
+        )
+        with pytest.raises(ApiError) as caught:
+            await client.fetch_daily("SPY", full=True)
+
+    assert not isinstance(caught.value, RateLimitedError)
+    assert "premium" in str(caught.value)
