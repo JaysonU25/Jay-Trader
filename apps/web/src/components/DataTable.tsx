@@ -1,8 +1,14 @@
+import type { ReactNode } from "react";
+
 export interface Column {
   key: string;
   header: string;
   align?: "left" | "right";
 }
+
+/** Cells take nodes, not just strings, so a status badge or a link can sit in
+ *  a column without the caller hand-rolling its own table. */
+export type Row = Record<string, ReactNode>;
 
 export function DataTable({
   columns,
@@ -10,7 +16,7 @@ export function DataTable({
   caption,
 }: {
   columns: Column[];
-  rows: Array<Record<string, string | number | null>>;
+  rows: Row[];
   caption: string;
 }) {
   return (
