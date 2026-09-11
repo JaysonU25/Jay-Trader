@@ -114,3 +114,29 @@ async def test_a_premium_refusal_is_not_treated_as_a_throttle():
 
     assert not isinstance(caught.value, RateLimitedError)
     assert "premium" in str(caught.value)
+
+
+@respx.mock
+async def test_a_burst_throttle_is_not_mistaken_for_a_premium_refusal():
+    """Regression: every Alpha Vantage message advertises the premium plans,
+    throttles included. Testing for the word "premium" therefore marks real,
+    self-clearing throttles as permanent entitlement failures, which skips the
+    symbol instead of backing off and quietly loses it from the universe.
+    """
+    burst = {
+        "Information": (
+            "Thank you for using Alpha Vantage! Please consider spreading out your "
+            "free API requests more sparingly (1 request per second). You may "
+            "subscribe to any of the premium plans at "
+            "https://www.alphavantage.co/premium/ to lift the free key rate limit "
+            "(25 requests per day), raise the per-second burst limit, and instantly "
+            "unlock all premium endpoints"
+        )
+    }
+    respx.get("https://www.alphavantage.co/query").mock(
+        return_value=httpx.Response(200, json=burst)
+    )
+
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(RateLimitedError):
+            await make_client(http).fetch_daily("QQQ")

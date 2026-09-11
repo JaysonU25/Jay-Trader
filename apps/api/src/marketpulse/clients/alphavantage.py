@@ -9,6 +9,24 @@ from marketpulse.core.ratelimit import TokenBucket
 
 _SERIES_KEY = "Time Series (Daily)"
 
+# Wording that marks a message as a transient throttle rather than a permanent
+# entitlement refusal. Matched case-insensitively, and checked before anything
+# else, because Alpha Vantage advertises its premium plans in every message --
+# including throttles -- so the word "premium" proves nothing on its own.
+_THROTTLE_HINTS = (
+    "rate limit",
+    "requests per day",
+    "per second",
+    "call frequency",
+    "spreading out",
+    "higher api call volume",
+)
+
+
+def _is_throttle(message: str) -> bool:
+    lowered = message.lower()
+    return any(hint in lowered for hint in _THROTTLE_HINTS)
+
 
 @dataclass(frozen=True)
 class DailyBar:
@@ -47,11 +65,15 @@ class AlphaVantageClient(BaseClient):
         # on its own; a premium-feature refusal never does. Classifying the
         # second as a throttle makes ingest_prices break out of its loop on the
         # first symbol, so one permanent misconfiguration kills all fifteen.
+        #
+        # Throttle wording is checked FIRST and wins. Testing for "premium"
+        # alone does not work: every message advertises the premium plans,
+        # throttles included, so that test marks real throttles permanent.
         message = payload.get("Note") or payload.get("Information")
         if message:
-            if "premium" in message.lower():
-                raise ApiError(f"alphavantage: {message}")
-            raise RateLimitedError(f"alphavantage: {message}")
+            if _is_throttle(message):
+                raise RateLimitedError(f"alphavantage: {message}")
+            raise ApiError(f"alphavantage: {message}")
         if "Error Message" in payload:
             raise ApiError(f"alphavantage: {payload['Error Message']}")
         if _SERIES_KEY not in payload:

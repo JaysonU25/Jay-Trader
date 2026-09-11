@@ -82,7 +82,12 @@ class TokenBucket:
 
 
 RATE_LIMITS: dict[str, Bucket] = {
-    "alphavantage": Bucket(rate=5, per=60.0, daily_cap=25),
+    # 1 per 1.5s, not 5 per 60s. Both average under the documented 5/min, but a
+    # 5-per-60s bucket starts full and fires five requests back to back, which
+    # trips the burst guard: "Please consider spreading out your free API
+    # requests more sparingly (1 request per second)". Serialising is what the
+    # vendor actually asks for, and 15 symbols still finish in about 22s.
+    "alphavantage": Bucket(rate=1, per=1.5, daily_cap=25),
     "fred": Bucket(rate=100, per=60.0),
     "coingecko": Bucket(rate=20, per=60.0),
     "finnhub": Bucket(rate=50, per=60.0),
