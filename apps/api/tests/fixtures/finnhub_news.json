@@ -1,0 +1,14 @@
+[
+  {
+    "category": "company", "datetime": 1714579200, "headline": "Apple beats estimates",
+    "id": 7712345, "image": "https://img.test/a.jpg", "related": "AAPL",
+    "source": "Reuters", "summary": "Quarterly results topped forecasts.",
+    "url": "https://news.test/apple-beats"
+  },
+  {
+    "category": "company", "datetime": 1714492800, "headline": "Apple announces buyback",
+    "id": 7712300, "image": "", "related": "AAPL",
+    "source": "Bloomberg", "summary": "Board approved a repurchase programme.",
+    "url": "https://news.test/apple-buyback"
+  }
+]

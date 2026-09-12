@@ -1,0 +1,14 @@
+import { Outlet } from "react-router";
+
+import { Nav } from "./Nav";
+
+export function Layout() {
+  return (
+    <div className="app">
+      <Nav />
+      <main className="main">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
