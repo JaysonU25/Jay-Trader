@@ -7,6 +7,7 @@ deployment is not built yet.
 - Design spec: [`docs/superpowers/specs/2026-09-05-market-pulse-design.md`](docs/superpowers/specs/2026-09-05-market-pulse-design.md)
 - API reference: [`apps/api/README.md`](apps/api/README.md)
 - Frontend reference: [`apps/web/README.md`](apps/web/README.md)
+- Cron reference: [`apps/cron/README.md`](apps/cron/README.md)
 - Known follow-ups: [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)
 
 | Source | Data | Job name |
@@ -173,16 +174,37 @@ market-pulse/
 │   │   │   ├── core/             # rate limiting, HMAC verification
 │   │   │   └── db/               # models, session, migrations
 │   │   └── tests/
-│   └── web/                      # React SPA
-│       ├── src/
-│       │   ├── lib/              # types, fetch client, query hooks, theme
-│       │   ├── charts/           # ECharts wrapper + pure option builders
-│       │   ├── components/       # tiles, tables, states, chart frame
-│       │   └── views/            # the seven pages
-│       └── tests/
+│   ├── web/                      # React SPA
+│   │   ├── src/
+│   │   │   ├── lib/              # types, fetch client, query hooks, theme
+│   │   │   ├── charts/           # ECharts wrapper + pure option builders
+│   │   │   ├── components/       # tiles, tables, states, chart frame
+│   │   │   └── views/            # the seven pages
+│   │   └── tests/
+│   └── cron/                     # Cloudflare Worker: scheduled ingest triggers
 └── docs/
     ├── FOLLOWUPS.md
     └── superpowers/{specs,plans}/
 ```
 
-Not built yet: `apps/cron` (Cloudflare Worker).
+## Deployment
+
+| Component | Platform | Where |
+|---|---|---|
+| API | Fly.io | `apps/api/Dockerfile`, `apps/api/fly.toml` |
+| Database | Neon | pooled (`-pooler`) connection string |
+| Frontend | Cloudflare | `apps/web`, built with `VITE_API_BASE` set at build time |
+| Cron | Cloudflare Workers | `apps/cron/wrangler.toml` |
+
+Order matters on a first deploy. `VITE_API_BASE` is baked into the frontend
+bundle at build time, and `CORS_ORIGINS` must name the frontend's exact origin:
+
+1. `fly deploy` — this is what creates the API hostname
+2. `fly ssh console -C "alembic upgrade head"`
+3. Build and deploy the frontend with `VITE_API_BASE` set to that hostname
+4. `fly secrets set CORS_ORIGINS='https://<frontend origin>'` (no trailing slash)
+5. `npx wrangler secret put INGEST_HMAC_SECRET` in `apps/cron`, then deploy it
+
+Getting step 3 or 4 wrong produces two failures worth telling apart:
+`ERR_NAME_NOT_RESOLVED` means the bundle names a host that does not exist;
+`Failed to fetch` while `curl` returns 200 means `CORS_ORIGINS` does not match.
