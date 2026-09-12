@@ -6,13 +6,37 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-# config.py -> marketpulse -> src -> api -> apps -> <repo root>
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+# In a source checkout this module sits at
+#   <repo root>/apps/api/src/marketpulse/config.py
+# so parents[2] is apps/api and parents[4] is the repo root.
+_APPS_API_DEPTH = 2
+_REPO_ROOT_DEPTH = 4
 
-# Look for .env beside the package first, then at the repo root. Without the
-# second location, running alembic from apps/ api would silently miss a root
-# .env and report every field as missing.
-_ENV_FILES = (_REPO_ROOT / "apps" / "api" / ".env", _REPO_ROOT / ".env")
+
+def _env_files(module_path: Path | None = None) -> tuple[Path, ...]:
+    """`.env` locations to read, lowest priority first.
+
+    Look beside the package first, then at the repo root; without the second,
+    running alembic from apps/api would miss a root .env and report every field
+    as missing.
+
+    The depths are bounds-checked rather than indexed directly. In the
+    container the package is installed at /app/src/marketpulse, which has only
+    four ancestors, so a bare parents[4] raises IndexError while this module is
+    being imported — the app dies at startup with a traceback that never
+    mentions configuration. There is no .env in the image at all (secrets
+    arrive as real environment variables), so returning fewer paths there is
+    correct, not a fallback.
+    """
+    parents = (module_path or Path(__file__)).resolve().parents
+    return tuple(
+        parents[depth] / ".env"
+        for depth in (_APPS_API_DEPTH, _REPO_ROOT_DEPTH)
+        if depth < len(parents)
+    )
+
+
+_ENV_FILES = _env_files()
 
 _ASYNC_DRIVER = "postgresql+asyncpg"
 

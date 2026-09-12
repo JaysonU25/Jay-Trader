@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -57,3 +59,35 @@ def test_universe_matches_spec():
     assert "CPIAUCSL" in universe.FRED_SERIES
     assert universe.CRYPTO_LIMIT == 20
     assert universe.FX_BASE == "EUR"
+
+
+def test_env_file_discovery_survives_a_shallow_install_path():
+    """The container installs the package at /app/src/marketpulse, which has
+    fewer ancestors than a source checkout. Indexing a fixed depth there raises
+    IndexError while config.py is being imported, so the app dies at startup
+    with a traceback that never mentions configuration.
+    """
+    from pathlib import PurePosixPath
+
+    from marketpulse.config import _env_files
+
+    shallow = PurePosixPath("/app/src/marketpulse/config.py")
+    assert len(shallow.parents) == 4  # guards the premise of this test
+
+    files = _env_files(Path("/app/src/marketpulse/config.py"))
+
+    assert all(isinstance(f, Path) for f in files)
+    assert len(files) == 1  # apps/api depth only; repo-root depth does not exist
+
+
+def test_env_file_discovery_finds_both_locations_in_a_checkout():
+    from marketpulse.config import _env_files
+
+    files = _env_files(Path("/repo/apps/api/src/marketpulse/config.py"))
+
+    # Compared as posix suffixes: resolve() prepends a drive letter on Windows,
+    # so absolute equality would assert the host OS rather than the behaviour.
+    suffixes = [f.as_posix() for f in files]
+    assert len(suffixes) == 2
+    assert suffixes[0].endswith("/repo/apps/api/.env")
+    assert suffixes[1].endswith("/repo/.env")
