@@ -1,38 +1,36 @@
-# Rename `app` before the first deploy: Fly app names are globally unique.
-app = "market-pulse-nurd5q"
-primary_region = "iad"
+# fly.toml app configuration file generated for market-pulse-nurd5q on 2026-09-12T22:24:58Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'market-pulse-nurd5q'
+primary_region = 'iad'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [env]
-  PORT = "8080"
+  PORT = '8080'
 
 [http_service]
   internal_port = 8080
   force_https = true
-
-  # Scale to zero between cron triggers. Reads are rare and the dashboard
-  # tolerates a cold start; this keeps the machine inside the free allowance.
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
 
-  # One machine, not two. The rate-limit token buckets are per-process, so a
-  # second instance would hold its own copy and could spend the Alpha Vantage
-  # 25/day quota twice. See the Dockerfile CMD comment.
   [http_service.concurrency]
-    type = "requests"
-    soft_limit = 40
+    type = 'requests'
     hard_limit = 80
+    soft_limit = 40
 
   [[http_service.checks]]
-    grace_period = "10s"
-    interval = "30s"
-    method = "GET"
-    timeout = "5s"
-    path = "/v1/health"
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/v1/health'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = 'shared-cpu-1x'
+  memory = '512mb'
