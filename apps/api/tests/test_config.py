@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from marketpulse.config import Settings
 from marketpulse import universe
 
@@ -8,12 +11,13 @@ def test_settings_read_from_environment(monkeypatch):
     monkeypatch.setenv("FRED_API_KEY", "fred-key")
     monkeypatch.setenv("FINNHUB_API_KEY", "fh-key")
     monkeypatch.setenv("INGEST_HMAC_SECRET", "secret")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.example")
 
     settings = Settings()
 
     assert settings.database_url == "postgresql+asyncpg://u:p@localhost/db"
     assert settings.alphavantage_api_key == "av-key"
-    assert settings.cors_origins == []
+    assert settings.cors_origins == ["https://app.example"]
 
 
 def test_cors_origins_parsed_from_comma_separated_string(monkeypatch):
@@ -25,6 +29,25 @@ def test_cors_origins_parsed_from_comma_separated_string(monkeypatch):
     monkeypatch.setenv("CORS_ORIGINS", "https://a.dev,https://b.dev")
 
     assert Settings().cors_origins == ["https://a.dev", "https://b.dev"]
+
+
+def test_missing_cors_origins_fails_at_startup(monkeypatch):
+    """CORS_ORIGINS has no default on purpose.
+
+    An empty allow-list is not a safe fallback: every browser request is
+    rejected while curl and every server-side health check still pass, so the
+    frontend fails with an opaque "Failed to fetch" and nothing server-side
+    reports a problem. Failing to boot is the louder, cheaper failure.
+    """
+    for key in ("DATABASE_URL", "ALPHAVANTAGE_API_KEY", "FRED_API_KEY",
+                "FINNHUB_API_KEY", "INGEST_HMAC_SECRET"):
+        monkeypatch.setenv(key, "x")
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+
+    # _env_file=None so the repo's own .env cannot satisfy the field and hide
+    # the very misconfiguration this test is about.
+    with pytest.raises(ValidationError, match="cors_origins"):
+        Settings(_env_file=None)
 
 
 def test_universe_matches_spec():

@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # returns 401 without a key, which is the whole crypto backfill.
     coingecko_api_key: str | None = None
     ingest_hmac_secret: str
-    cors_origins: Annotated[list[str], NoDecode] = []
+    cors_origins: Annotated[list[str], NoDecode] 
 
     @field_validator("cors_origins", mode="before")
     @classmethod
