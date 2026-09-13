@@ -208,3 +208,4 @@ bundle at build time, and `CORS_ORIGINS` must name the frontend's exact origin:
 Getting step 3 or 4 wrong produces two failures worth telling apart:
 `ERR_NAME_NOT_RESOLVED` means the bundle names a host that does not exist;
 `Failed to fetch` while `curl` returns 200 means `CORS_ORIGINS` does not match.
+
