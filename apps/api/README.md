@@ -1,4 +1,4 @@
-# Market Pulse API
+# Jay Trader API
 
 FastAPI service over the ingested financial data. Reads only; ingest runs
 through the CLI or the signed internal endpoint.

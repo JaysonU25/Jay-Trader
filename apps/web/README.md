@@ -1,6 +1,6 @@
-# Market Pulse web
+# Jay Trader web
 
-React SPA over the Market Pulse API. Static build, no SSR.
+React SPA over the Jay Trader API. Static build, no SSR.
 
 ## Setup
 

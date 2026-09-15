@@ -23,7 +23,7 @@ export function Nav() {
         gap: 4,
       }}
     >
-      <strong style={{ marginBottom: 12 }}>Market Pulse</strong>
+      <strong style={{ marginBottom: 12 }}>Jay Trader</strong>
       {LINKS.map(([to, label]) => (
         <NavLink
           key={to}

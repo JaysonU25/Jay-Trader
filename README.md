@@ -1,4 +1,4 @@
-# Market Pulse
+# Jay Trader
 
 Aggregates five free financial APIs into one Postgres database, serves them
 through a FastAPI read API, and renders them in a React SPA. Cloudflare

@@ -30,7 +30,7 @@ def create_app() -> FastAPI:
         finally:
             await engine.dispose()
 
-    app = FastAPI(title="Market Pulse API", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="Jay Trader API", version="1.0.0", lifespan=lifespan)
     app.add_middleware(CacheControlMiddleware)
     app.add_middleware(
         CORSMiddleware,

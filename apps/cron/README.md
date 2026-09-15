@@ -1,4 +1,4 @@
-# Market Pulse cron
+# Jay Trader cron
 
 Cloudflare Worker that fires the seven ingest jobs on schedule. It holds no
 business logic: it signs a request and posts it to the API's

@@ -23,4 +23,4 @@ async def test_unknown_route_is_404_and_not_cached(client):
 async def test_openapi_schema_is_served(client):
     response = await client.get("/openapi.json")
     assert response.status_code == 200
-    assert response.json()["info"]["title"] == "Market Pulse API"
+    assert response.json()["info"]["title"] == "Jay Trader API"

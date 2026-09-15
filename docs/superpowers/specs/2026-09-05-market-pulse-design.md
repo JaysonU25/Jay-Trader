@@ -1,4 +1,4 @@
-# Market Pulse — Design Spec
+# Jay Trader — Design Spec
 
 **Date:** 2026-09-05
 **Status:** Approved

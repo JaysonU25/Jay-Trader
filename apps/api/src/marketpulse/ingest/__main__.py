@@ -6,7 +6,7 @@ from marketpulse.config import get_settings
 from marketpulse.db.session import make_engine, make_session_factory
 from marketpulse.ingest.jobs import JOB_NAMES, run_source
 
-app = typer.Typer(help="Market Pulse ingest jobs.")
+app = typer.Typer(help="Jay Trader ingest jobs.")
 
 
 async def _execute(jobs: tuple[str, ...], full: bool) -> None:
