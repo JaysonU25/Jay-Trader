@@ -30,9 +30,17 @@ name the vendor breakage responsible. See `docs/FOLLOWUPS.md`.
 
 ## Charts
 
-All charts go through `src/charts/Chart.tsx` and read their colors from CSS
-custom properties in `src/styles/tokens.css`, so light and dark are two
-separately validated palettes rather than an inversion of one.
+All charts go through `src/charts/Chart.tsx`. The option builders are written
+against the CSS custom properties in `src/styles/tokens.css`, so light and dark
+are two separately validated palettes rather than an inversion of one.
+
+**ECharts does not resolve those tokens** — `src/charts/resolveTokens.ts` does,
+on the way to the renderer. The canvas renderer assigns colors straight to
+`strokeStyle` / `fillStyle`, where `var(--series-1)` is not a valid color; the
+context keeps its previous value and every series draws black. Resolution is
+re-run whenever the theme changes, because the same token then reads a
+different value. `tests/chart.test.tsx` asserts no `var(` ever reaches
+`setOption`.
 
 The rules the option builders enforce come from the dataviz skill and are
 covered by `tests/chartOptions.test.ts`:

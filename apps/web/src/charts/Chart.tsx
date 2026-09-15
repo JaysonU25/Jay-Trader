@@ -7,6 +7,8 @@ import { useEffect, useRef } from "react";
 
 import { useTheme } from "@/lib/theme";
 
+import { documentTokenReader, resolveCssVars } from "./resolveTokens";
+
 echarts.use([
   LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer,
 ]);
@@ -38,9 +40,16 @@ export function Chart({
   }, []);
 
   useEffect(() => {
-    // `theme` is a dependency because ECharts resolves CSS custom properties at
-    // draw time — a theme switch needs a redraw to pick up the new values.
-    instance.current?.setOption(option, { notMerge: true });
+    // Tokens are resolved here, not by ECharts. The canvas renderer assigns
+    // colors straight to strokeStyle/fillStyle, where `var(--series-1)` is not
+    // a valid color and silently leaves the previous value — black — in place.
+    //
+    // `theme` is a dependency because the resolved values change with it: the
+    // same token reads a different hex once data-theme flips, so the option has
+    // to be re-resolved and redrawn.
+    if (!instance.current) return;
+    const resolved = resolveCssVars(option, documentTokenReader());
+    instance.current.setOption(resolved, { notMerge: true });
   }, [option, theme]);
 
   return <div ref={host} role="img" aria-label={ariaLabel} style={{ height, width: "100%" }} />;
