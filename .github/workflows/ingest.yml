@@ -1,0 +1,49 @@
+name: Ingest
+
+# Scheduling lives here rather than in a Cloudflare Worker: the Workers free
+# plan caps an account at five cron triggers and this project needs six.
+#
+# Two caveats worth knowing, both inherent to Actions cron:
+#   * Runs are queued, not guaranteed. Under load GitHub delays them by minutes
+#     and may skip one entirely. Every ingest job is idempotent, so a missed run
+#     self-heals at the next one.
+#   * Scheduled workflows are disabled automatically after 60 days with no
+#     commits to the default branch. Re-enable from the Actions tab.
+on:
+  schedule:
+    - cron: "15 13 * * *"    # macro   - after the 08:30 ET FRED releases
+    - cron: "30 15 * * 1-5"  # fx      - after the ECB publishes, ~15:00 UTC
+    - cron: "0 22 * * 1-5"   # prices  - after the US close, 21:00 UTC
+    - cron: "0 */6 * * *"    # crypto + news
+    - cron: "0 23 * * *"     # earnings
+    - cron: "0 4 * * 1"      # ratings - weekly
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'Comma-separated jobs, or "all"'
+        required: true
+        default: "all"
+
+concurrency:
+  # Never let two ingest runs overlap: they would spend the Alpha Vantage daily
+  # quota twice over against the same cap.
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trigger ingest
+        env:
+          BASE_URL: ${{ vars.API_BASE_URL }}
+          SECRET: ${{ secrets.INGEST_HMAC_SECRET }}
+        run: |
+          python .github/scripts/trigger_ingest.py \
+            --base-url "$BASE_URL" \
+            --secret "$SECRET" \
+            --schedule "${{ github.event.schedule }}" \
+            --jobs "${{ inputs.jobs }}"
