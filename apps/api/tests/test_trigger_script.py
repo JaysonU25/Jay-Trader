@@ -106,3 +106,62 @@ def test_one_failing_job_does_not_stop_the_others(monkeypatch):
 
     assert attempted == ["crypto", "news"]
     assert exit_code == 1  # surfaced as a red run, but news was still attempted
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        # An unset ${{ vars.X }} interpolates to "", so these arrive blank.
+        ["--base-url", "", "--secret", "s", "--jobs", "macro"],
+        ["--base-url", "   ", "--secret", "s", "--jobs", "macro"],
+        ["--base-url", "https://x", "--secret", "", "--jobs", "macro"],
+        # A hostname with no scheme is the other easy way to misconfigure it.
+        ["--base-url", "market-pulse.fly.dev", "--secret", "s", "--jobs", "macro"],
+    ],
+)
+def test_blank_or_schemeless_configuration_is_reported_not_crashed(argv, monkeypatch):
+    """Regression: an unset API_BASE_URL used to surface as
+
+        ValueError: unknown url type: '/internal/ingest/crypto'
+
+    from inside urllib, naming neither the variable nor that it was never set.
+    """
+
+    def explode(*args, **kwargs):  # pragma: no cover - must never run
+        raise AssertionError("a request was attempted with bad configuration")
+
+    monkeypatch.setattr(script, "trigger", explode)
+    assert script.main(argv) == 1
+
+
+def test_trigger_builds_the_url_and_headers_the_api_expects(monkeypatch):
+    """Exercises trigger() itself, not a stand-in: the URL join and the header
+    names are the parts that must match the API, and mocking trigger away would
+    test neither."""
+    captured = {}
+
+    class _Response:
+        status = 202
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["method"] = request.method
+        captured["headers"] = {k.lower(): v for k, v in request.header_items()}
+        return _Response()
+
+    monkeypatch.setattr(script.urllib.request, "urlopen", fake_urlopen)
+
+    # Trailing slash on the base must not produce a doubled slash in the path.
+    assert script.trigger("https://x/", "a-secret", "macro") == 202
+
+    assert captured["url"] == "https://x/internal/ingest/macro"
+    assert captured["method"] == "POST"
+
+    timestamp = captured["headers"]["x-timestamp"]
+    assert captured["headers"]["x-signature"] == api_sign("a-secret", timestamp, "macro")

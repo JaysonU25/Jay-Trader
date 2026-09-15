@@ -90,6 +90,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # An unset ${{ vars.X }} or ${{ secrets.X }} interpolates to an empty
+    # string rather than failing the step, so these arrive blank instead of
+    # missing. Without this check the first one surfaces deep inside urllib as
+    # "unknown url type: '/internal/ingest/crypto'", which names neither the
+    # variable nor the fact that it was never set.
+    base_url = args.base_url.strip()
+    if not base_url:
+        print(
+            "API_BASE_URL is empty. Set it as a repository *variable* (not a "
+            "secret) under Settings > Secrets and variables > Actions > "
+            "Variables, e.g. https://your-app.fly.dev",
+            file=sys.stderr,
+        )
+        return 1
+    if not base_url.startswith(("http://", "https://")):
+        print(
+            f"API_BASE_URL must include a scheme, got {base_url!r}",
+            file=sys.stderr,
+        )
+        return 1
+    if not args.secret.strip():
+        print(
+            "INGEST_HMAC_SECRET is empty. Set it as a repository *secret* and "
+            "make it match the API's INGEST_HMAC_SECRET exactly.",
+            file=sys.stderr,
+        )
+        return 1
+
     if args.jobs.strip():
         requested = tuple(j.strip() for j in args.jobs.split(",") if j.strip())
         if requested == ("all",):
@@ -111,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
 
     failures = 0
     for job in requested:
-        status = trigger(args.base_url, args.secret, job)
+        status = trigger(base_url, args.secret, job)
         if status == 202:
             print(f"  {job}: accepted")
         else:
