@@ -1,7 +1,9 @@
+import { useState } from "react";
+
 import { DataTable } from "@/components/DataTable";
-import { ErrorState, Loading } from "@/components/States";
+import { EmptyState, ErrorState, Loading } from "@/components/States";
 import { formatDate, formatDateTime, formatNumber } from "@/lib/format";
-import { useNews, useUpcomingEarnings } from "@/lib/queries";
+import { useAssets, useNews, useUpcomingEarnings } from "@/lib/queries";
 
 const HOUR_LABEL: Record<string, string> = {
   bmo: "Before market open",
@@ -9,9 +11,20 @@ const HOUR_LABEL: Record<string, string> = {
   dmh: "During market hours",
 };
 
+/** Empty string means "no filter"; a <select> value cannot be undefined. */
+const ALL = "";
+
 export function NewsEarnings() {
-  const news = useNews(undefined, 50);
+  const [symbol, setSymbol] = useState<string>(ALL);
+
+  const assets = useAssets();
+  const news = useNews(symbol || undefined, 50);
   const earnings = useUpcomingEarnings(90);
+
+  // The dropdown is a convenience over the feed. If the asset list fails or is
+  // still loading, fall back to an empty option list rather than blocking the
+  // news behind it.
+  const options = assets.data ?? [];
 
   return (
     <>
@@ -45,23 +58,68 @@ export function NewsEarnings() {
       </section>
 
       <section className="card">
-        <h2>Latest news</h2>
-        {news.isLoading ? <Loading /> : null}
-        {news.isError ? <ErrorState error={news.error} onRetry={() => news.refetch()} /> : null}
-        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {(news.data ?? []).map((item) => (
-            <li key={item.url} style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-              <a href={item.url} target="_blank" rel="noopener noreferrer">
-                {item.headline}
-              </a>
-              <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 2 }}>
-                {`${item.symbol}${item.source ? ` · ${item.source}` : ""} · ${formatDateTime(
-                  item.published_at,
-                )}`}
-              </div>
-            </li>
-          ))}
-        </ul>
+        <header
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 16,
+            flexWrap: "wrap",
+          }}
+        >
+          <h2 style={{ margin: 0 }}>Latest news</h2>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+            Symbol
+            <select
+              value={symbol}
+              onChange={(event) => setSymbol(event.target.value)}
+              style={{ minWidth: 140 }}
+            >
+              <option value={ALL}>All symbols</option>
+              {options.map((asset) => (
+                <option key={asset.symbol} value={asset.symbol}>
+                  {asset.symbol}
+                </option>
+              ))}
+            </select>
+          </label>
+        </header>
+
+        <div style={{ marginTop: 12 }}>
+          {news.isLoading ? <Loading /> : null}
+          {news.isError ? <ErrorState error={news.error} onRetry={() => news.refetch()} /> : null}
+
+          {news.data && news.data.length === 0 ? (
+            <EmptyState
+              title={symbol ? `No news for ${symbol}` : "No news yet"}
+              hint={
+                symbol
+                  ? "Finnhub returned nothing for this symbol in the ingested window."
+                  : undefined
+              }
+            />
+          ) : null}
+
+          {news.data && news.data.length > 0 ? (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {news.data.map((item) => (
+                <li
+                  key={item.url}
+                  style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}
+                >
+                  <a href={item.url} target="_blank" rel="noopener noreferrer">
+                    {item.headline}
+                  </a>
+                  <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 2 }}>
+                    {`${item.symbol}${item.source ? ` · ${item.source}` : ""} · ${formatDateTime(
+                      item.published_at,
+                    )}`}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       </section>
     </>
   );
