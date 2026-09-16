@@ -12,36 +12,29 @@ const LINKS: Array<[string, string]> = [
   ["/pipeline", "Pipeline"],
 ];
 
-export function Nav() {
+export function Nav({
+  id,
+  onNavigate,
+}: {
+  id?: string;
+  /** Called after a destination is chosen, so the drawer can close itself. */
+  onNavigate?: () => void;
+}) {
   return (
-    <nav
-      style={{
-        borderRight: "1px solid var(--border)",
-        padding: 16,
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-      }}
-    >
-      <strong style={{ marginBottom: 12 }}>Jay Trader</strong>
+    <nav id={id} className="nav" aria-label="Primary">
+      <strong className="nav__brand">Jay Trader</strong>
       {LINKS.map(([to, label]) => (
         <NavLink
           key={to}
           to={to}
           end={to === "/"}
-          style={({ isActive }) => ({
-            color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-            fontWeight: isActive ? 600 : 400,
-            textDecoration: "none",
-            padding: "6px 8px",
-            borderRadius: 6,
-            background: isActive ? "var(--surface-1)" : "transparent",
-          })}
+          className={({ isActive }) => (isActive ? "nav__link nav__link--active" : "nav__link")}
+          onClick={onNavigate}
         >
           {label}
         </NavLink>
       ))}
-      <div style={{ marginTop: "auto", paddingTop: 16 }}>
+      <div className="nav__footer">
         <ThemeToggle />
       </div>
     </nav>
