@@ -3,7 +3,7 @@ from datetime import date
 EQUITIES: tuple[str, ...] = (
     "SPY", "QQQ", "DIA", "IWM",
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META",
-    "TSLA", "JPM", "XOM", "JNJ", "WMT",
+    "GLD", "VOO", "XOM", "JNJ", "WMT",
 )
 
 FRED_SERIES: tuple[str, ...] = (
